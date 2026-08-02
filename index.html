@@ -2052,7 +2052,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const APP_BUILD = '2026-08-02';
 
 // Service worker dziala tylko po http/https — przy otwarciu pliku z dysku
@@ -24303,9 +24303,61 @@ window.syncTeraz = async () => {
     st.style.color = rodzaj === 'ok' ? 'var(--known-color)'
                    : rodzaj === 'blad' ? 'var(--accent)' : 'var(--text2)';
   }).catch(() => {});
+  syncPokazKroki();
 };
 
 (function initSyncUI() { syncPokazKroki(); })();
+
+// ---------- synchronizacja w tle ----------
+function syncToast(tekst, rodzaj, ileMs) {
+  let el = document.getElementById('lr-sync-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'lr-sync-toast';
+    el.className = 'lr-update-bar';
+    el.style.bottom = '20px';
+    document.body.appendChild(el);
+  }
+  el.textContent = tekst;
+  el.style.borderColor = rodzaj === 'blad' ? 'var(--accent)'
+                       : rodzaj === 'ok' ? 'var(--known-color)' : 'var(--accent2)';
+  clearTimeout(el._timer);
+  if (ileMs !== 0) el._timer = setTimeout(() => el.remove(), ileMs || 4000);
+}
+
+let _ostatniAutoSync = 0;
+async function syncWTle(powod) {
+  if (typeof Sync === 'undefined') return;
+  if (!Sync.masKonfig() || !Sync.auto()) return;
+  if (!localStorage.getItem('lr-sync-email')) return;
+  if (!navigator.onLine) return;
+  if (Sync._trwa) return;
+  if (Date.now() - _ostatniAutoSync < 60000) return;   // nie częściej niż raz na minutę
+  _ostatniAutoSync = Date.now();
+
+  let bylBlad = false;
+  try {
+    const wynik = await Sync.synchronizuj((tekst, rodzaj) => {
+      const st = document.getElementById('sync-status');
+      if (st) { st.textContent = tekst; st.style.color = rodzaj === 'blad' ? 'var(--accent)' : 'var(--text2)'; }
+      if (rodzaj === 'blad') { bylBlad = true; syncToast(tekst, 'blad', 9000); }
+    });
+    // cisza, gdy nic nie przyszlo i nic nie poszlo — zeby nie meczyc przy kazdym starcie
+    if (wynik && (wynik.pobrane || wynik.wyslane || wynik.usuniete)) {
+      syncToast('✓ Zsynchronizowano — pobrano ' + wynik.pobrane + ', wysłano ' + wynik.wyslane, 'ok');
+    }
+  } catch (e) {
+    if (!bylBlad) syncToast('✗ Synchronizacja: ' + Sync.opisBledu(e), 'blad', 9000);
+  }
+  syncPokazKroki();
+}
+window.syncWTle = syncWTle;
+
+// Powrot do aplikacji (przelaczenie zakladki, odblokowanie telefonu) oraz
+// odejscie od niej to najlepsze momenty na synchronizacje.
+document.addEventListener('visibilitychange', () => syncWTle(document.hidden ? 'wyjscie' : 'powrot'));
+window.addEventListener('online', () => syncWTle('siec'));
+setInterval(() => syncWTle('cyklicznie'), 15 * 60 * 1000);
 
 // Drop any key left over from the old Pixabay / Google-CSE setup
 (function clearOldImageApiKeys() {
@@ -24606,10 +24658,8 @@ document.getElementById('import-backup-input').addEventListener('change', async 
 (async () => {
   warnIfNoDictionary();
   await db.init();
-  // cicha synchronizacja w tle, jesli wlaczona
-  if (typeof Sync !== 'undefined' && Sync.masKonfig() && Sync.auto() && navigator.onLine) {
-    setTimeout(() => Sync.synchronizuj(() => {}).catch(() => {}), 1500);
-  }
+  // synchronizacja startowa — z widocznym efektem i komunikatem przy bledzie
+  setTimeout(() => { if (typeof syncWTle === 'function') syncWTle('start'); }, 1200);
   await renderLibrary();
   await updateBadges();
   TTS.init();
