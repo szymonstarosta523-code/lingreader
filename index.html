@@ -2053,7 +2053,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.4.0';
 const APP_BUILD = '2026-08-02';
 
 // Service worker dziala tylko po http/https — przy otwarciu pliku z dysku
@@ -2700,6 +2700,74 @@ const Sync = {
 
   auto() { return localStorage.getItem('lr-sync-auto') === '1'; },
   ustawAuto(v) { localStorage.setItem('lr-sync-auto', v ? '1' : '0'); },
+
+  // Czy jest w ogole co wysylac? Sprawdzamy lokalnie, zeby nie budzic
+  // polaczenia z Firebase przy kazdym przelaczeniu okna.
+  async czyCosDoWyslania() {
+    try {
+      const odW = this._odKiedyWysylac();
+      const groby = JSON.parse(localStorage.getItem('lr-sync-deleted') || '[]');
+      if (groby.length) return true;
+      const wszystkie = await db.getAll('words');
+      return wszystkie.some(w => !w.modified || w.modified > odW);
+    } catch (e) { return false; }
+  },
+
+  // Tylko WYSYLKA, bez pobierania. Uzywane przy zamykaniu aplikacji:
+  // jest o polowe krotsze, wiec ma duzo wieksza szanse zdazyc.
+  async wypchnij() {
+    if (this._trwa) return { wyslane: 0 };
+    if (!this.masKonfig() || !navigator.onLine) return { wyslane: 0 };
+    if (!localStorage.getItem('lr-sync-email')) return { wyslane: 0 };
+    this._trwa = true;
+    try {
+      await this.polacz();
+      const uid = await this.czekajNaUid();
+      if (!uid) return { wyslane: 0 };
+
+      const f = this._fb;
+      const kolekcja = f.collection(this._db, 'users', uid, 'words');
+      const teraz = Date.now();
+      const odW = this._odKiedyWysylac();
+
+      const wszystkie = await db.getAll('words');
+      const doWyslania = wszystkie.filter(w => !w.modified || w.modified > odW);
+      let wyslane = 0;
+
+      for (let i = 0; i < doWyslania.length; i += 400) {
+        const paczka = f.writeBatch(this._db);
+        const uzupelnic = [];
+        for (const w of doWyslania.slice(i, i + 400)) {
+          const wpis = { ...w };
+          if (!wpis.modified) { wpis.modified = teraz; uzupelnic.push(wpis); }
+          paczka.set(f.doc(kolekcja, this._id(w.word)), wpis);
+          wyslane++;
+        }
+        await paczka.commit();
+        for (const wpis of uzupelnic) await db.put('words', wpis);
+      }
+
+      const groby = JSON.parse(localStorage.getItem('lr-sync-deleted') || '[]');
+      if (groby.length) {
+        const paczka = f.writeBatch(this._db);
+        groby.slice(0, 400).forEach(g => {
+          paczka.set(f.doc(kolekcja, this._id(g.word)),
+                     { word: g.word, deleted: true, modified: g.modified || teraz });
+        });
+        await paczka.commit();
+        localStorage.setItem('lr-sync-deleted', JSON.stringify(groby.slice(400)));
+      }
+
+      localStorage.setItem('lr-sync-push', String(Date.now()));
+      if (wyslane) localStorage.setItem('lr-sync-kiedy', new Date().toISOString());
+      return { wyslane };
+    } catch (e) {
+      console.warn('Wysyłka przy zamykaniu:', e);
+      return { wyslane: 0, blad: e };
+    } finally {
+      this._trwa = false;
+    }
+  },
 
   // ---------- wlasciwa synchronizacja ----------
   async synchronizuj(raport) {
@@ -24398,9 +24466,31 @@ async function syncWTle(powod) {
 }
 window.syncWTle = syncWTle;
 
-// Powrot do aplikacji (przelaczenie zakladki, odblokowanie telefonu) oraz
-// odejscie od niej to najlepsze momenty na synchronizacje.
-document.addEventListener('visibilitychange', () => syncWTle(document.hidden ? 'wyjscie' : 'powrot'));
+// Przy ZAMYKANIU (albo odlozeniu telefonu) liczy sie tylko wypchniecie zmian
+// i to, zeby zdazylo. Zadnego dlawika i zadnego pobierania.
+let _wysylkaTrwa = false;
+async function syncPrzyWyjsciu() {
+  if (_wysylkaTrwa) return;
+  if (typeof Sync === 'undefined' || !Sync.masKonfig() || !Sync.auto()) return;
+  if (!localStorage.getItem('lr-sync-email') || !navigator.onLine) return;
+  if (!(await Sync.czyCosDoWyslania())) return;      // nic nowego — nie budzimy Firebase
+  _wysylkaTrwa = true;
+  try {
+    const w = await Sync.wypchnij();
+    if (w && w.wyslane) console.log('LingReader: wypchnięto', w.wyslane, 'słówek przy zamykaniu');
+  } finally {
+    _wysylkaTrwa = false;
+    syncPokazKroki();
+  }
+}
+window.syncPrzyWyjsciu = syncPrzyWyjsciu;
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) syncPrzyWyjsciu();            // zamkniecie / przelaczenie / zgaszenie ekranu
+  else syncWTle('powrot');                           // powrot do aplikacji
+});
+window.addEventListener('pagehide', () => syncPrzyWyjsciu());
+window.addEventListener('beforeunload', () => syncPrzyWyjsciu());
 window.addEventListener('online', () => syncWTle('siec'));
 setInterval(() => syncWTle('cyklicznie'), 15 * 60 * 1000);
 
