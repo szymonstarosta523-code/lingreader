@@ -6,7 +6,7 @@
    to wystarczy, zeby telefon pobral nowe pliki.
    ============================================================ */
 
-const WERSJA = 'lr-v4';
+const WERSJA = 'lr-v5';
 const CACHE = 'lingreader-' + WERSJA;
 
 // Pliki, bez ktorych aplikacja nie ruszy — pobierane z gory.

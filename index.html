@@ -1933,6 +1933,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
               <label class="aw-auto" style="font-size:12px">
                 <input type="checkbox" id="sync-auto" onchange="syncUstawAuto(this.checked)"> synchronizuj sam przy starcie
               </label>
+              <button class="btn btn-sm" onclick="syncOdNowa()" style="background:rgba(255,255,255,0.08);color:var(--text);font-size:12px;padding:7px 12px">Pełna synchronizacja</button>
               <button class="btn btn-sm" onclick="syncWyloguj()" style="background:rgba(255,255,255,0.08);color:var(--text2);font-size:12px;padding:7px 12px;margin-left:auto">Wyloguj</button>
             </div>
             <div id="sync-status" style="font-size:12px;color:var(--text2);line-height:1.5"></div>
@@ -2052,7 +2053,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.0';
 const APP_BUILD = '2026-08-02';
 
 // Service worker dziala tylko po http/https — przy otwarciu pliku z dysku
@@ -2684,8 +2685,18 @@ const Sync = {
 
   // ---------- pomocnicze ----------
   _id(slowo) { return encodeURIComponent(slowo).replace(/\./g, '%2E'); },
-  _ostatnia() { return parseInt(localStorage.getItem('lr-sync-last') || '0'); },
-  _zapiszOstatnia(t) { localStorage.setItem('lr-sync-last', String(t)); },
+  // Dwa osobne znaczniki. POBIERANIE opiera sie na najwiekszym znaczniku,
+  // jaki faktycznie przyszedl z chmury (nie na zegarze tego urzadzenia) —
+  // inaczej rozjechane zegary dwoch urzadzen gubia zmiany.
+  _odKiedyPobierac() {
+    return parseInt(localStorage.getItem('lr-sync-pull') || localStorage.getItem('lr-sync-last') || '0');
+  },
+  _odKiedyWysylac() {
+    return parseInt(localStorage.getItem('lr-sync-push') || localStorage.getItem('lr-sync-last') || '0');
+  },
+  zresetujZnaczniki() {
+    ['lr-sync-pull', 'lr-sync-push', 'lr-sync-last'].forEach(k => localStorage.removeItem(k));
+  },
 
   auto() { return localStorage.getItem('lr-sync-auto') === '1'; },
   ustawAuto(v) { localStorage.setItem('lr-sync-auto', v ? '1' : '0'); },
@@ -2704,18 +2715,21 @@ const Sync = {
       const f = this._fb;
       const kolekcja = f.collection(this._db, 'users', uid, 'words');
       const teraz = Date.now();
-      const odKiedy = this._ostatnia();
+      const odPobierania = this._odKiedyPobierac();
+      const odWysylania = this._odKiedyWysylac();
+      let najwiekszyZdalny = odPobierania;
 
       // ---- 1. POBIERZ zmiany z chmury ----
       info('Pobieram zmiany…');
-      const zapytanie = odKiedy
-        ? f.query(kolekcja, f.where('modified', '>', odKiedy))
+      const zapytanie = odPobierania
+        ? f.query(kolekcja, f.where('modified', '>', odPobierania))
         : f.query(kolekcja);
       const snap = await f.getDocs(zapytanie);
 
       let pobrane = 0, usuniete = 0;
       for (const d of snap.docs) {
         const zdalne = d.data();
+        if (zdalne.modified > najwiekszyZdalny) najwiekszyZdalny = zdalne.modified;
         const slowo = zdalne.word;
         if (!slowo) continue;
         const lokalne = await db.get('words', slowo);
@@ -2738,18 +2752,24 @@ const Sync = {
       // ---- 2. WYSLIJ zmiany lokalne ----
       info('Wysyłam zmiany…');
       const wszystkie = await db.getAll('words');
-      const doWyslania = wszystkie.filter(w => (w.modified || 0) > odKiedy);
+      // UWAGA: slowka sprzed wlaczenia synchronizacji nie maja znacznika czasu.
+      // Musza pojsc do chmury tak samo jak zmienione — bez tego zostalyby
+      // na zawsze tylko na jednym urzadzeniu.
+      const doWyslania = wszystkie.filter(w => !w.modified || w.modified > odWysylania);
       let wyslane = 0;
 
       for (let i = 0; i < doWyslania.length; i += 400) {
         const paczka = f.writeBatch(this._db);
+        const uzupelnic = [];
         for (const w of doWyslania.slice(i, i + 400)) {
           const wpis = { ...w };
-          if (!wpis.modified) wpis.modified = teraz;
+          if (!wpis.modified) { wpis.modified = teraz; uzupelnic.push(wpis); }
           paczka.set(f.doc(kolekcja, this._id(w.word)), wpis);
           wyslane++;
         }
         await paczka.commit();
+        // dopisz brakujace znaczniki lokalnie, zeby nie wysylac ich w kolko
+        for (const wpis of uzupelnic) await db.put('words', wpis);
       }
 
       // ---- 3. tombstony po lokalnych usunieciach ----
@@ -2786,7 +2806,9 @@ const Sync = {
         localStorage.setItem('lr-local-modified', String(teraz));
       }
 
-      this._zapiszOstatnia(teraz);
+      localStorage.setItem('lr-sync-pull', String(najwiekszyZdalny));
+      localStorage.setItem('lr-sync-push', String(Date.now()));
+      localStorage.removeItem('lr-sync-last');
       localStorage.setItem('lr-sync-kiedy', new Date().toISOString());
 
       await renderVocabulary().catch(() => {});
@@ -24294,6 +24316,14 @@ window.syncWyloguj = async () => {
 };
 
 window.syncUstawAuto = (v) => Sync.ustawAuto(v);
+
+// Kasuje znaczniki i przepuszcza wszystko w obie strony — ratunek, gdy
+// cos zostalo w tyle. Nic nie usuwa, tylko porownuje komplet danych.
+window.syncOdNowa = async () => {
+  if (!confirm('Porównać komplet słówek z chmurą? Nic nie zostanie usunięte — to potrwa dłużej niż zwykła synchronizacja.')) return;
+  Sync.zresetujZnaczniki();
+  await syncTeraz();
+};
 
 window.syncTeraz = async () => {
   const st = document.getElementById('sync-status');
