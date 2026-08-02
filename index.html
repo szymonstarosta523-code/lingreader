@@ -1892,6 +1892,54 @@ body.focus-mode .reader-content { max-width: 1000px; }
       <div style="max-width:600px">
 
         <div style="background:var(--card-bg);border-radius:12px;padding:24px;margin-bottom:20px">
+          <h3 style="font-size:15px;margin-bottom:16px;color:var(--text)">Synchronizacja telefon ↔ laptop</h3>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.55">
+            Synchronizuje słówka, powtórki, tagi, obrazki i postępy modułów. Książki zostają
+            na każdym urządzeniu osobno. Potrzebny darmowy projekt Firebase — instrukcja
+            jest w pliku <code>JAK-WRZUCIC-NA-TELEFON.txt</code>, część 5.
+          </p>
+
+          <div id="sync-krok-config">
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">
+              1. Wklej blok <code>firebaseConfig</code> z konsoli Firebase
+            </label>
+            <textarea id="sync-config-input" rows="5" placeholder="const firebaseConfig = { apiKey: &quot;...&quot;, authDomain: &quot;...&quot;, projectId: &quot;...&quot; };"
+              style="width:100%;padding:10px;background:var(--bg1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:var(--text);font-size:12px;font-family:monospace;resize:vertical;margin-bottom:8px"></textarea>
+            <button class="btn btn-sm" onclick="syncZapiszKonfig()" style="background:var(--accent2);color:#fff;font-size:12px;padding:7px 14px">Zapisz konfigurację</button>
+            <div id="sync-config-status" style="font-size:12px;margin-top:8px;line-height:1.5"></div>
+          </div>
+
+          <div id="sync-krok-login" style="display:none;margin-top:16px">
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">
+              2. Zaloguj się tym samym e-mailem na obu urządzeniach
+            </label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <input type="email" id="sync-email" placeholder="e-mail" autocomplete="username"
+                style="flex:1;min-width:180px;padding:9px 12px;background:var(--bg1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:var(--text);font-size:13px">
+              <input type="password" id="sync-haslo" placeholder="hasło" autocomplete="current-password"
+                style="flex:1;min-width:140px;padding:9px 12px;background:var(--bg1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:var(--text);font-size:13px">
+              <button class="btn btn-sm" onclick="syncZaloguj()" style="background:var(--accent2);color:#fff;font-size:12px;padding:7px 14px">Zaloguj</button>
+            </div>
+            <div style="font-size:11px;color:var(--text2)">
+              Pierwsze logowanie zakłada konto. Hasło min. 6 znaków — to konto istnieje tylko
+              w Twoim projekcie Firebase.
+            </div>
+            <div id="sync-login-status" style="font-size:12px;margin-top:8px;line-height:1.5"></div>
+          </div>
+
+          <div id="sync-krok-dziala" style="display:none;margin-top:16px">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <button class="btn btn-sm" onclick="syncTeraz()" style="background:var(--accent2);color:#fff;font-size:12px;padding:8px 16px">Synchronizuj teraz</button>
+              <label class="aw-auto" style="font-size:12px">
+                <input type="checkbox" id="sync-auto" onchange="syncUstawAuto(this.checked)"> synchronizuj sam przy starcie
+              </label>
+              <button class="btn btn-sm" onclick="syncWyloguj()" style="background:rgba(255,255,255,0.08);color:var(--text2);font-size:12px;padding:7px 12px;margin-left:auto">Wyloguj</button>
+            </div>
+            <div id="sync-status" style="font-size:12px;color:var(--text2);line-height:1.5"></div>
+          </div>
+        </div>
+
+        <div style="background:var(--card-bg);border-radius:12px;padding:24px;margin-bottom:20px">
           <h3 style="font-size:15px;margin-bottom:16px;color:var(--text)">Limity fiszek</h3>
           <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.5">
             Ogranicz dzienną liczbę nowych słówek i maksymalną liczbę powtórek w jednej sesji.
@@ -2004,7 +2052,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.1';
 const APP_BUILD = '2026-08-02';
 
 // Service worker dziala tylko po http/https — przy otwarciu pliku z dysku
@@ -2509,6 +2557,283 @@ class DB {
     await this.put('history', { ...entry, date: new Date().toISOString().split('T')[0], timestamp: Date.now() });
   }
 }
+
+// ============================================================
+// SYNCHRONIZACJA (Firebase Firestore)
+// ------------------------------------------------------------
+// Synchronizuje slowka, postep SM-2, tagi, obrazki i postepy
+// modulow nauki miedzy urzadzeniami. Ksiazki zostaja lokalnie.
+//
+// Konfiguracje wklejasz w Ustawieniach — nic nie jest wpisane
+// na stale w kodzie. Bez konfiguracji ten modul nic nie robi.
+// ============================================================
+const Sync = {
+  SDK: 'https://www.gstatic.com/firebasejs/12.17.0/',
+  _app: null, _auth: null, _db: null, _fb: null,
+  _uid: null,
+  _trwa: false,
+
+  // klucze localStorage z postepami modulow — jada razem ze slowkami
+  KLUCZE_LOCAL: [
+    'lr-grammar-progress', 'lr-grammar-sr', 'lr-grammar-streak',
+    'lr-irreg-progress', 'lr-colloc-progress', 'lr-wf-progress',
+    'lr-idioms-progress', 'lr-confusing-progress', 'lr-pv-progress',
+    'lr-sb-progress', 'lr-prep-progress', 'lr-art-progress',
+    'lr-writing-progress', 'lr-fc-new-limit', 'lr-fc-session-limit'
+  ],
+
+  // ---------- konfiguracja ----------
+  konfig() {
+    try { return JSON.parse(localStorage.getItem('lr-firebase-config') || 'null'); }
+    catch (e) { return null; }
+  },
+  masKonfig() { const k = this.konfig(); return !!(k && k.apiKey && k.projectId); },
+
+  zapiszKonfig(tekst) {
+    // przyjmujemy zarowno czysty JSON, jak i blok "const firebaseConfig = {...};"
+    let t = String(tekst || '').trim();
+    const start = t.indexOf('{');
+    const end = t.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('Nie widzę nawiasów { } — wklej cały blok konfiguracji.');
+    t = t.slice(start, end + 1);
+    t = t.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":')   // klucze bez cudzysłowów
+         .replace(/'/g, '"')
+         .replace(/,(\s*[}\]])/g, '$1');                          // przecinek na końcu
+    const obj = JSON.parse(t);
+    if (!obj.apiKey || !obj.projectId) throw new Error('Brakuje apiKey albo projectId.');
+    localStorage.setItem('lr-firebase-config', JSON.stringify(obj));
+    this._app = null; this._auth = null; this._db = null;
+    return obj;
+  },
+
+  // ---------- polaczenie ----------
+  async polacz() {
+    if (this._db) return true;
+    const cfg = this.konfig();
+    if (!cfg) throw new Error('Brak konfiguracji Firebase — wklej ją w Ustawieniach.');
+    if (!navigator.onLine) throw new Error('Brak internetu.');
+
+    const [appMod, authMod, fsMod] = await Promise.all([
+      import(this.SDK + 'firebase-app.js'),
+      import(this.SDK + 'firebase-auth.js'),
+      import(this.SDK + 'firebase-firestore.js')
+    ]);
+    this._app = appMod.initializeApp(cfg);
+    this._auth = authMod.getAuth(this._app);
+    this._db = fsMod.getFirestore(this._app);
+    this._fb = { ...authMod, ...fsMod };
+    return true;
+  },
+
+  // surowe kody Firebase na ludzki jezyk
+  BLEDY: {
+    'auth/invalid-api-key': 'Zły klucz API — sprawdź, czy wkleiłeś cały blok konfiguracji.',
+    'auth/api-key-not-valid': 'Zły klucz API — sprawdź, czy wkleiłeś cały blok konfiguracji.',
+    'auth/operation-not-allowed': 'W Firebase nie jest włączone logowanie e-mailem. Authentication → Sign-in method → włącz "Email/Password".',
+    'auth/weak-password': 'Hasło musi mieć co najmniej 6 znaków.',
+    'auth/invalid-email': 'Niepoprawny adres e-mail.',
+    'auth/wrong-password': 'Błędne hasło.',
+    'auth/invalid-credential': 'Błędny e-mail lub hasło.',
+    'auth/email-already-in-use': 'To konto już istnieje — podaj hasło, którego użyłeś przy zakładaniu.',
+    'auth/admin-restricted-operation': 'Zakładanie nowych kont jest wyłączone w projekcie. Zaloguj się kontem, które już istnieje.',
+    'auth/network-request-failed': 'Brak połączenia z Firebase — sprawdź internet.',
+    'auth/too-many-requests': 'Za dużo prób logowania. Odczekaj chwilę.',
+    'permission-denied': 'Firestore odrzucił zapis — najprawdopodobniej nie wkleiłeś reguł bezpieczeństwa (krok 2 instrukcji).',
+    'unavailable': 'Firestore niedostępny — sprawdź internet.',
+    'failed-precondition': 'Baza Firestore nie została jeszcze utworzona w konsoli Firebase.'
+  },
+  opisBledu(e) {
+    const kod = (e && e.code) ? String(e.code) : '';
+    if (this.BLEDY[kod]) return this.BLEDY[kod];
+    const msg = (e && e.message) ? e.message : String(e);
+    if (/permission|insufficient/i.test(msg)) return this.BLEDY['permission-denied'];
+    return (kod ? kod + ' — ' : '') + msg;
+  },
+
+  async zaloguj(email, haslo) {
+    await this.polacz();
+    const a = this._fb;
+    try {
+      const cred = await a.signInWithEmailAndPassword(this._auth, email, haslo);
+      this._uid = cred.user.uid;
+    } catch (e) {
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+        const cred = await a.createUserWithEmailAndPassword(this._auth, email, haslo);
+        this._uid = cred.user.uid;   // pierwsze logowanie zaklada konto
+      } else throw e;
+    }
+    localStorage.setItem('lr-sync-email', email);
+    return this._uid;
+  },
+
+  async wyloguj() {
+    if (this._auth && this._fb) await this._fb.signOut(this._auth);
+    this._uid = null;
+    localStorage.removeItem('lr-sync-email');
+  },
+
+  async czekajNaUid() {
+    if (this._uid) return this._uid;
+    await this.polacz();
+    return new Promise((res) => {
+      const off = this._fb.onAuthStateChanged(this._auth, (u) => {
+        off(); this._uid = u ? u.uid : null; res(this._uid);
+      });
+    });
+  },
+
+  // ---------- pomocnicze ----------
+  _id(slowo) { return encodeURIComponent(slowo).replace(/\./g, '%2E'); },
+  _ostatnia() { return parseInt(localStorage.getItem('lr-sync-last') || '0'); },
+  _zapiszOstatnia(t) { localStorage.setItem('lr-sync-last', String(t)); },
+
+  auto() { return localStorage.getItem('lr-sync-auto') === '1'; },
+  ustawAuto(v) { localStorage.setItem('lr-sync-auto', v ? '1' : '0'); },
+
+  // ---------- wlasciwa synchronizacja ----------
+  async synchronizuj(raport) {
+    if (this._trwa) return;
+    this._trwa = true;
+    const info = (t, k) => { if (typeof raport === 'function') raport(t, k); };
+    try {
+      info('Łączę…');
+      await this.polacz();
+      const uid = await this.czekajNaUid();
+      if (!uid) throw new Error('Nie jesteś zalogowany — zaloguj się w Ustawieniach.');
+
+      const f = this._fb;
+      const kolekcja = f.collection(this._db, 'users', uid, 'words');
+      const teraz = Date.now();
+      const odKiedy = this._ostatnia();
+
+      // ---- 1. POBIERZ zmiany z chmury ----
+      info('Pobieram zmiany…');
+      const zapytanie = odKiedy
+        ? f.query(kolekcja, f.where('modified', '>', odKiedy))
+        : f.query(kolekcja);
+      const snap = await f.getDocs(zapytanie);
+
+      let pobrane = 0, usuniete = 0;
+      for (const d of snap.docs) {
+        const zdalne = d.data();
+        const slowo = zdalne.word;
+        if (!slowo) continue;
+        const lokalne = await db.get('words', slowo);
+
+        if (zdalne.deleted) {
+          if (lokalne && (lokalne.modified || 0) < (zdalne.modified || 0)) {
+            await db.delete('words', slowo);
+            usuniete++;
+          }
+          continue;
+        }
+        if (!lokalne || (lokalne.modified || 0) < (zdalne.modified || 0)) {
+          const wpis = { ...zdalne };
+          delete wpis.deleted;
+          await db.put('words', wpis);
+          pobrane++;
+        }
+      }
+
+      // ---- 2. WYSLIJ zmiany lokalne ----
+      info('Wysyłam zmiany…');
+      const wszystkie = await db.getAll('words');
+      const doWyslania = wszystkie.filter(w => (w.modified || 0) > odKiedy);
+      let wyslane = 0;
+
+      for (let i = 0; i < doWyslania.length; i += 400) {
+        const paczka = f.writeBatch(this._db);
+        for (const w of doWyslania.slice(i, i + 400)) {
+          const wpis = { ...w };
+          if (!wpis.modified) wpis.modified = teraz;
+          paczka.set(f.doc(kolekcja, this._id(w.word)), wpis);
+          wyslane++;
+        }
+        await paczka.commit();
+      }
+
+      // ---- 3. tombstony po lokalnych usunieciach ----
+      const groby = JSON.parse(localStorage.getItem('lr-sync-deleted') || '[]');
+      if (groby.length) {
+        const paczka = f.writeBatch(this._db);
+        groby.slice(0, 400).forEach(g => {
+          paczka.set(f.doc(kolekcja, this._id(g.word)),
+                     { word: g.word, deleted: true, modified: g.modified || teraz });
+        });
+        await paczka.commit();
+        localStorage.setItem('lr-sync-deleted', JSON.stringify(groby.slice(400)));
+      }
+
+      // ---- 4. postepy modulow (localStorage) ----
+      info('Postępy modułów…');
+      const metaRef = f.doc(this._db, 'users', uid, 'meta', 'local');
+      const metaSnap = await f.getDoc(metaRef);
+      const zdalneMeta = metaSnap.exists() ? metaSnap.data() : null;
+      const lokalnaData = parseInt(localStorage.getItem('lr-local-modified') || '0');
+
+      if (zdalneMeta && (zdalneMeta.modified || 0) > lokalnaData) {
+        Object.keys(zdalneMeta.dane || {}).forEach(k => {
+          if (zdalneMeta.dane[k] != null) localStorage.setItem(k, zdalneMeta.dane[k]);
+        });
+        localStorage.setItem('lr-local-modified', String(zdalneMeta.modified));
+      } else {
+        const dane = {};
+        this.KLUCZE_LOCAL.forEach(k => {
+          const v = localStorage.getItem(k);
+          if (v != null) dane[k] = v;
+        });
+        await f.setDoc(metaRef, { dane, modified: teraz });
+        localStorage.setItem('lr-local-modified', String(teraz));
+      }
+
+      this._zapiszOstatnia(teraz);
+      localStorage.setItem('lr-sync-kiedy', new Date().toISOString());
+
+      await renderVocabulary().catch(() => {});
+      await updateBadges().catch(() => {});
+
+      const podsumowanie = `✓ Zsynchronizowano — pobrano ${pobrane}, wysłano ${wyslane}` +
+                           (usuniete ? `, usunięto ${usuniete}` : '');
+      info(podsumowanie, 'ok');
+      return { pobrane, wyslane, usuniete };
+    } catch (e) {
+      console.error('Sync:', e);
+      info('✗ ' + this.opisBledu(e), 'blad');
+      throw e;
+    } finally {
+      this._trwa = false;
+    }
+  }
+};
+
+// Każdy zapis słówka dostaje znacznik czasu — po nim rozstrzygamy konflikty.
+(function podepnijZnacznikCzasu() {
+  const oryginalnyPut = DB.prototype.put;
+  DB.prototype.put = function (store, data) {
+    if (store === 'words' && data && typeof data === 'object') data.modified = Date.now();
+    return oryginalnyPut.call(this, store, data);
+  };
+  const oryginalnyDelete = DB.prototype.delete;
+  DB.prototype.delete = function (store, key) {
+    if (store === 'words') {
+      try {
+        const groby = JSON.parse(localStorage.getItem('lr-sync-deleted') || '[]');
+        groby.push({ word: key, modified: Date.now() });
+        localStorage.setItem('lr-sync-deleted', JSON.stringify(groby.slice(-2000)));
+      } catch (e) { /* trudno */ }
+    }
+    return oryginalnyDelete.call(this, store, key);
+  };
+  // zmiany w localStorage tez musza znaczyc czas
+  const oryginalnySet = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (k, v) {
+    const r = oryginalnySet.call(this, k, v);
+    if (typeof Sync !== 'undefined' && Sync.KLUCZE_LOCAL.indexOf(k) !== -1) {
+      oryginalnySet.call(this, 'lr-local-modified', String(Date.now()));
+    }
+    return r;
+  };
+})();
 
 // ============================================================
 // SM-2 SPACED REPETITION ALGORITHM
@@ -23889,6 +24214,99 @@ document.getElementById('popup-speak-btn').addEventListener('click', (e) => {
   el.innerHTML = 'Słownik: <b>' + n.toLocaleString('pl-PL') + '</b> haseł (' + esc(src) + built + ')';
 })();
 
+// ---------- UI synchronizacji ----------
+function syncPokazKroki() {
+  const maKonfig = Sync.masKonfig();
+  const zalogowany = !!localStorage.getItem('lr-sync-email');
+  const el = (id) => document.getElementById(id);
+  if (!el('sync-krok-config')) return;
+
+  el('sync-krok-login').style.display = maKonfig ? '' : 'none';
+  el('sync-krok-dziala').style.display = (maKonfig && zalogowany) ? '' : 'none';
+
+  if (maKonfig) {
+    const k = Sync.konfig();
+    el('sync-config-status').innerHTML =
+      'Projekt: <b>' + esc(k.projectId) + '</b> ✓ ' +
+      '<span style="cursor:pointer;text-decoration:underline dotted" onclick="syncKasujKonfig()">zmień</span>';
+    el('sync-config-status').style.color = 'var(--known-color)';
+  }
+  if (zalogowany) {
+    el('sync-email').value = localStorage.getItem('lr-sync-email') || '';
+    el('sync-login-status').textContent = 'Zalogowany jako ' + localStorage.getItem('lr-sync-email');
+    el('sync-login-status').style.color = 'var(--known-color)';
+    const auto = el('sync-auto');
+    if (auto) auto.checked = Sync.auto();
+    const kiedy = localStorage.getItem('lr-sync-kiedy');
+    el('sync-status').textContent = kiedy
+      ? 'Ostatnia synchronizacja: ' + new Date(kiedy).toLocaleString('pl-PL')
+      : 'Jeszcze nie synchronizowano.';
+  }
+}
+
+window.syncZapiszKonfig = () => {
+  const st = document.getElementById('sync-config-status');
+  try {
+    const cfg = Sync.zapiszKonfig(document.getElementById('sync-config-input').value);
+    document.getElementById('sync-config-input').value = '';
+    st.textContent = '✓ Zapisano projekt ' + cfg.projectId;
+    st.style.color = 'var(--known-color)';
+    syncPokazKroki();
+  } catch (e) {
+    st.textContent = '✗ ' + e.message;
+    st.style.color = 'var(--accent)';
+  }
+};
+
+window.syncKasujKonfig = () => {
+  if (!confirm('Usunąć konfigurację Firebase z tego urządzenia? Dane w chmurze zostaną nietknięte.')) return;
+  localStorage.removeItem('lr-firebase-config');
+  localStorage.removeItem('lr-sync-email');
+  location.reload();
+};
+
+window.syncZaloguj = async () => {
+  const st = document.getElementById('sync-login-status');
+  const email = document.getElementById('sync-email').value.trim();
+  const haslo = document.getElementById('sync-haslo').value;
+  if (!email || haslo.length < 6) {
+    st.textContent = '✗ Podaj e-mail i hasło (min. 6 znaków).';
+    st.style.color = 'var(--accent)';
+    return;
+  }
+  st.textContent = 'Loguję…'; st.style.color = 'var(--text2)';
+  try {
+    await Sync.zaloguj(email, haslo);
+    document.getElementById('sync-haslo').value = '';
+    st.textContent = '✓ Zalogowany jako ' + email;
+    st.style.color = 'var(--known-color)';
+    syncPokazKroki();
+    syncTeraz();
+  } catch (e) {
+    st.textContent = '✗ ' + Sync.opisBledu(e);
+    st.style.color = 'var(--accent)';
+  }
+};
+
+window.syncWyloguj = async () => {
+  await Sync.wyloguj().catch(() => {});
+  location.reload();
+};
+
+window.syncUstawAuto = (v) => Sync.ustawAuto(v);
+
+window.syncTeraz = async () => {
+  const st = document.getElementById('sync-status');
+  await Sync.synchronizuj((tekst, rodzaj) => {
+    if (!st) return;
+    st.textContent = tekst;
+    st.style.color = rodzaj === 'ok' ? 'var(--known-color)'
+                   : rodzaj === 'blad' ? 'var(--accent)' : 'var(--text2)';
+  }).catch(() => {});
+};
+
+(function initSyncUI() { syncPokazKroki(); })();
+
 // Drop any key left over from the old Pixabay / Google-CSE setup
 (function clearOldImageApiKeys() {
   ['lr-pixabay-key', 'lr-google-key', 'lr-google-cx'].forEach(k => localStorage.removeItem(k));
@@ -24188,6 +24606,10 @@ document.getElementById('import-backup-input').addEventListener('change', async 
 (async () => {
   warnIfNoDictionary();
   await db.init();
+  // cicha synchronizacja w tle, jesli wlaczona
+  if (typeof Sync !== 'undefined' && Sync.masKonfig() && Sync.auto() && navigator.onLine) {
+    setTimeout(() => Sync.synchronizuj(() => {}).catch(() => {}), 1500);
+  }
   await renderLibrary();
   await updateBadges();
   TTS.init();
