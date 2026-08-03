@@ -404,6 +404,50 @@ body.focus-mode .focus-toggle-btn { background: var(--accent2); color: white; }
   box-sizing: border-box;
 }
 .vocab-edit-box input:focus, .vocab-edit-box select:focus { border-color: var(--accent2); outline: none; }
+.import-box {
+  background: var(--bg2); border-radius: 14px; padding: 26px;
+  width: min(620px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.import-box h3 { color: var(--text); font-size: 18px; }
+.import-box label { display: block; color: var(--text2); font-size: 13px; margin-bottom: 4px; }
+.import-box input[type=text] {
+  width: 100%; padding: 9px 12px; background: var(--bg1); color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; font-size: 13px;
+}
+.import-podtytul { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+.import-pasek {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 4px;
+}
+.import-mini { font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
+.import-btn-online {
+  background: rgba(255,255,255,0.08); color: var(--text); font-size: 12px;
+  padding: 6px 12px; border: none; border-radius: 8px; cursor: pointer;
+}
+.import-btn-online:disabled { opacity: 0.5; cursor: default; }
+.import-lista { overflow-y: auto; flex: 1; min-height: 120px; margin: 0 -6px; padding: 6px; }
+.import-wiersz {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px; border-radius: 10px; background: rgba(255,255,255,0.03); margin-bottom: 8px;
+}
+.import-wiersz.juz-mam { opacity: 0.72; }
+.import-wiersz input[type=checkbox] { margin-top: 4px; flex: none; }
+.import-tresc { flex: 1; min-width: 0; }
+.import-glowa { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.import-slowo { color: var(--text); font-size: 14px; font-weight: 600; }
+.import-znacznik {
+  font-size: 10px; color: var(--text2); background: rgba(255,255,255,0.08);
+  padding: 2px 7px; border-radius: 20px;
+}
+.import-tlum {
+  width: 100%; padding: 6px 9px; background: var(--bg1); color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; font-size: 13px;
+}
+.import-kontekst {
+  font-size: 12px; color: var(--text2); font-style: italic;
+  margin-top: 6px; line-height: 1.45;
+}
 .vocab-edit-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 .vocab-edit-actions button {
   padding: 8px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600;
@@ -1729,7 +1773,8 @@ body.focus-mode .reader-content { max-width: 1000px; }
   <div class="view" id="view-vocabulary">
     <div class="view-header">
       <h1>Słownik</h1>
-      <button class="btn btn-primary" onclick="showAddWordModal()" style="margin-left:auto;font-size:12px;padding:6px 14px">+ Dodaj słówko</button>
+      <button class="btn" onclick="pokazImportSlowek()" style="margin-left:auto;font-size:12px;padding:6px 14px;background:rgba(255,255,255,0.08);color:var(--text)" title="Wklej listę słówek albo odbierz ją z wtyczki">&#8681; Importuj listę</button>
+      <button class="btn btn-primary" onclick="showAddWordModal()" style="font-size:12px;padding:6px 14px">+ Dodaj słówko</button>
     </div>
     <div class="vocab-content">
       <div class="vocab-filters">
@@ -2129,8 +2174,8 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.9.1';
-const APP_BUILD = '2026-08-02';
+const APP_VERSION = '1.10.0';
+const APP_BUILD = '2026-08-03';
 
 // Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
 // to dziala dopiero po przeinstalowaniu aplikacji — a to zadziala od razu.
@@ -5233,6 +5278,326 @@ window.editWord = async (word) => {
     await updateBadges();
   };
 };
+
+// ============================================================
+// IMPORT LIST SLOWEK Z ZEWNATRZ
+// ------------------------------------------------------------
+// Odbiera paczke slowek z wtyczki Chrome (listy slowek Lingoda)
+// albo z recznego wklejenia. Pokazuje okno podgladu, uzupelnia
+// tlumaczenia ze slownika offline i dopisuje zaznaczone slowka.
+// ============================================================
+const ImportSlowek = {
+  POS: {
+    noun: 'n', nouns: 'n', rzeczownik: 'n',
+    verb: 'v', verbs: 'v', czasownik: 'v',
+    adjective: 'adj', adjectives: 'adj', przymiotnik: 'adj',
+    adverb: 'adv', adverbs: 'adv', przyslowek: 'adv',
+    preposition: 'prep', conjunction: 'conj', pronoun: 'pron',
+    interjection: 'interj', determiner: 'det', numeral: 'num',
+    phrase: 'phrase', idiom: 'phrase', expression: 'phrase',
+    'phrasal verb': 'v', 'proper noun': 'n',
+    n: 'n', v: 'v', adj: 'adj', adv: 'adv', prep: 'prep',
+    conj: 'conj', pron: 'pron', interj: 'interj'
+  },
+
+  _pos(t) {
+    const k = String(t || '').toLowerCase().replace(/[.()]/g, '').trim();
+    return this.POS[k] || '';
+  },
+
+  // "to relax" -> "relax", "flat share (pl. flat shares)" -> "flat share"
+  _slowo(t) {
+    let s = String(t || '')
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^[\-–—•*\d.\s]+/, '')
+      .replace(/[.,;:!?]+$/, '')
+      .trim();
+    const bezTo = s.replace(/^to\s+/i, '');
+    if (bezTo !== s && !bezTo.includes(' ')) s = bezTo;   // tylko dla pojedynczych czasownikow
+    return s.toLowerCase();
+  },
+
+  _zdanie(t) {
+    return String(t || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  },
+
+  // ---------- wejscie ----------
+  async przyjmij(paczka) {
+    if (!paczka) return;
+    const surowe = Array.isArray(paczka) ? paczka : (paczka.slowa || []);
+    const zrodlo = (paczka && paczka.zrodlo) || 'import';
+    const tagi = ((paczka && paczka.tagi) || []).filter(Boolean);
+
+    const widziane = new Set();
+    const wiersze = [];
+    for (const s of surowe) {
+      const obj = (typeof s === 'string') ? { word: s } : (s || {});
+      const pos = this._pos(obj.pos || obj.czescMowy || obj.partOfSpeech);
+      let word = this._slowo(obj.word || obj.slowo || obj.term || '');
+      if (pos === 'v') word = word.replace(/^to\s+/, '');   // "to move out" -> "move out"
+      if (!word || word.length > 60 || widziane.has(word)) continue;
+      widziane.add(word);
+      wiersze.push({
+        word,
+        pos,
+        context: this._zdanie(obj.context || obj.przyklad || obj.example || obj.sentence),
+        translation: this._zdanie(obj.translation || obj.tlumaczenie || ''),
+        zaznaczone: true,
+        byloWczesniej: false
+      });
+    }
+
+    if (!wiersze.length) {
+      alert('Nie znalazłem żadnych słówek do zaimportowania.');
+      return;
+    }
+
+    // co juz mam + tlumaczenia ze slownika offline
+    for (const w of wiersze) {
+      const istnieje = await db.get('words', w.word).catch(() => null);
+      if (istnieje) {
+        w.byloWczesniej = true;
+        w.zaznaczone = !istnieje.translation || !istnieje.context;   // warto uzupelnic braki
+        if (!w.translation) w.translation = istnieje.translation || '';
+      }
+      if (!w.translation && typeof DICT !== 'undefined' && DICT[w.word]) w.translation = DICT[w.word];
+      if (!w.pos && typeof DICT_POS !== 'undefined' && DICT_POS[w.word]) w.pos = DICT_POS[w.word];
+      if (!w.pos && w.word.includes(' ')) w.pos = 'phrase';
+    }
+
+    this._okno(wiersze, zrodlo, tagi);
+  },
+
+  // ---------- okno podgladu ----------
+  _okno(wiersze, zrodlo, tagi) {
+    const stary = document.getElementById('import-modal');
+    if (stary) stary.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'vocab-edit-modal';
+    overlay.id = 'import-modal';
+    overlay.innerHTML = `
+      <div class="import-box">
+        <h3 style="margin:0 0 6px">Import słówek${zrodlo ? ' — ' + esc(zrodlo) : ''}</h3>
+        <div class="import-podtytul" id="import-podtytul"></div>
+
+        <div class="import-pasek">
+          <label class="import-mini"><input type="checkbox" id="import-wszystkie" checked> zaznacz wszystkie</label>
+          <button type="button" class="btn btn-sm import-btn-online" id="import-online">Uzupełnij tłumaczenia online</button>
+          <span class="import-mini" id="import-postep"></span>
+        </div>
+
+        <div class="import-lista" id="import-lista"></div>
+
+        <label style="margin-top:14px">Tagi (oddzielone przecinkami)</label>
+        <input type="text" id="import-tagi" value="${esc(tagi.join(', '))}">
+
+        <div class="vocab-edit-actions" style="margin-top:16px">
+          <button class="cancel-btn" id="import-anuluj">Anuluj</button>
+          <button class="save-btn" id="import-zapisz">Dodaj zaznaczone</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const lista = overlay.querySelector('#import-lista');
+    const podtytul = overlay.querySelector('#import-podtytul');
+    const przyciskZapisz = overlay.querySelector('#import-zapisz');
+    const przyciskOnline = overlay.querySelector('#import-online');
+
+    const odswiezNaglowek = () => {
+      const n = wiersze.filter(w => w.zaznaczone).length;
+      const nowe = wiersze.filter(w => !w.byloWczesniej).length;
+      const bez = wiersze.filter(w => !w.translation).length;
+      podtytul.textContent =
+        `${wiersze.length} słówek — ${nowe} nowych, ${wiersze.length - nowe} już masz` +
+        (bez ? `, ${bez} bez tłumaczenia` : '');
+      przyciskZapisz.textContent = 'Dodaj zaznaczone (' + n + ')';
+      przyciskZapisz.disabled = n === 0;
+      przyciskZapisz.style.opacity = n === 0 ? '0.5' : '';
+      przyciskOnline.style.display = bez ? '' : 'none';
+      przyciskOnline.textContent = 'Uzupełnij tłumaczenia online (' + bez + ')';
+    };
+
+    lista.innerHTML = wiersze.map((w, i) => `
+      <div class="import-wiersz${w.byloWczesniej ? ' juz-mam' : ''}" data-i="${i}">
+        <input type="checkbox" class="import-cb" data-i="${i}" ${w.zaznaczone ? 'checked' : ''}>
+        <div class="import-tresc">
+          <div class="import-glowa">
+            <span class="import-slowo">${esc(w.word)}</span>
+            ${w.pos ? `<span class="pos-badge ${esc(w.pos)}">${esc(w.pos)}</span>` : ''}
+            ${w.byloWczesniej ? '<span class="import-znacznik">już w słowniku</span>' : ''}
+          </div>
+          <input type="text" class="import-tlum" data-i="${i}" placeholder="tłumaczenie…"
+                 value="${esc(w.translation || '')}">
+          ${w.context ? `<div class="import-kontekst">${esc(w.context)}</div>` : ''}
+        </div>
+      </div>`).join('');
+
+    lista.addEventListener('change', (e) => {
+      const i = e.target.dataset.i;
+      if (i === undefined) return;
+      if (e.target.classList.contains('import-cb')) wiersze[i].zaznaczone = e.target.checked;
+      if (e.target.classList.contains('import-tlum')) wiersze[i].translation = e.target.value.trim();
+      odswiezNaglowek();
+    });
+    lista.addEventListener('input', (e) => {
+      const i = e.target.dataset.i;
+      if (i !== undefined && e.target.classList.contains('import-tlum')) wiersze[i].translation = e.target.value.trim();
+    });
+
+    overlay.querySelector('#import-wszystkie').addEventListener('change', (e) => {
+      wiersze.forEach(w => w.zaznaczone = e.target.checked);
+      lista.querySelectorAll('.import-cb').forEach(cb => cb.checked = e.target.checked);
+      odswiezNaglowek();
+    });
+
+    // ---- tlumaczenia online (MyMemory) ----
+    przyciskOnline.addEventListener('click', async () => {
+      const braki = wiersze.map((w, i) => ({ w, i })).filter(x => !x.w.translation);
+      const postep = overlay.querySelector('#import-postep');
+      przyciskOnline.disabled = true;
+      let zrobione = 0;
+      for (const { w, i } of braki) {
+        postep.textContent = `tłumaczę ${++zrobione}/${braki.length}…`;
+        try {
+          const r = await autoTranslate(w.word);
+          if (r && r.translation) {
+            w.translation = r.translation;
+            if (!w.pos && r.pos) w.pos = r.pos;
+            const pole = lista.querySelector(`.import-tlum[data-i="${i}"]`);
+            if (pole) pole.value = w.translation;
+          }
+        } catch (e) { /* trudno, idziemy dalej */ }
+        await new Promise(r => setTimeout(r, 250));
+        odswiezNaglowek();
+      }
+      postep.textContent = 'gotowe';
+      przyciskOnline.disabled = false;
+      odswiezNaglowek();
+    });
+
+    // ---- zapis ----
+    const zamknij = () => overlay.remove();
+    overlay.querySelector('#import-anuluj').addEventListener('click', zamknij);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) zamknij(); });
+
+    przyciskZapisz.addEventListener('click', async () => {
+      przyciskZapisz.disabled = true;
+      przyciskZapisz.textContent = 'Zapisuję…';
+      const tagiPaczki = overlay.querySelector('#import-tagi').value
+        .split(',').map(t => t.trim()).filter(Boolean);
+
+      let dodane = 0, uzupelnione = 0;
+      for (const w of wiersze.filter(x => x.zaznaczone)) {
+        try {
+          const istnieje = await db.get('words', w.word);
+          if (istnieje) {
+            let zmiana = false;
+            if (!istnieje.translation && w.translation) { istnieje.translation = w.translation; zmiana = true; }
+            if (!istnieje.context && w.context) { istnieje.context = w.context; zmiana = true; }
+            if (!istnieje.pos && w.pos) { istnieje.pos = w.pos; zmiana = true; }
+            const zbior = new Set([...(istnieje.tags || []), ...tagiPaczki]);
+            if (zbior.size !== (istnieje.tags || []).length) { istnieje.tags = [...zbior]; zmiana = true; }
+            if (zmiana) { await db.put('words', istnieje); uzupelnione++; }
+          } else {
+            await db.put('words', {
+              word: w.word,
+              translation: w.translation || '',
+              pos: w.pos || '',
+              context: w.context || '',
+              status: 1,
+              isPhrase: w.word.includes(' '),
+              bookId: '',
+              tags: tagiPaczki,
+              ...SM2.defaultCard()
+            });
+            dodane++;
+          }
+        } catch (e) { console.warn('import:', w.word, e); }
+      }
+
+      if (typeof Sync !== 'undefined' && Sync.zaplanujWysylke) Sync.zaplanujWysylke();
+      await renderVocabulary().catch(() => {});
+      await updateBadges().catch(() => {});
+      zamknij();
+      alert(`Gotowe — dodano ${dodane} nowych słówek` +
+            (uzupelnione ? `, uzupełniono ${uzupelnione} istniejących.` : '.'));
+    });
+
+    odswiezNaglowek();
+  },
+
+  // ---------- reczne wklejenie ----------
+  recznie() {
+    const stary = document.getElementById('import-paste-modal');
+    if (stary) stary.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'vocab-edit-modal';
+    overlay.id = 'import-paste-modal';
+    overlay.innerHTML = `
+      <div class="vocab-edit-box" style="max-width:560px">
+        <h3>Wklej listę słówek</h3>
+        <p style="font-size:12px;color:var(--text2);line-height:1.55;margin:0 0 12px">
+          Jedno słówko w linii. Możesz dopisać tłumaczenie po myślniku ze spacjami
+          albo po tabulatorze:<br>
+          <code>easy-going - wyluzowany</code><br>
+          Przyjmę też listę w formacie JSON z wtyczki.
+        </p>
+        <textarea id="import-paste" rows="10"
+          style="width:100%;padding:10px;background:var(--bg1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:var(--text);font-size:13px;font-family:monospace;resize:vertical"></textarea>
+        <div class="vocab-edit-actions" style="margin-top:14px">
+          <button class="cancel-btn" id="paste-anuluj">Anuluj</button>
+          <button class="save-btn" id="paste-dalej">Dalej</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const zamknij = () => overlay.remove();
+    overlay.querySelector('#paste-anuluj').addEventListener('click', zamknij);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) zamknij(); });
+    overlay.querySelector('#import-paste').focus();
+    overlay.querySelector('#paste-dalej').addEventListener('click', () => {
+      const tekst = overlay.querySelector('#import-paste').value;
+      zamknij();
+      this.przyjmij(this.zTekstu(tekst));
+    });
+  },
+
+  zTekstu(tekst) {
+    const t = String(tekst || '').trim();
+    if (!t) return { zrodlo: 'wklejone', slowa: [] };
+    if (t[0] === '[' || t[0] === '{') {
+      try {
+        const j = JSON.parse(t);
+        return Array.isArray(j) ? { zrodlo: 'wklejone', slowa: j } : j;
+      } catch (e) { /* lecimy dalej jak zwykly tekst */ }
+    }
+    const slowa = t.split('\n').map(linia => {
+      const l = linia.trim();
+      if (!l) return null;
+      const m = l.match(/^(.*?)(?:\t| [–—-] )(.*)$/);
+      return m ? { word: m[1], translation: m[2] } : { word: l };
+    }).filter(Boolean);
+    return { zrodlo: 'wklejone', slowa };
+  }
+};
+
+window.pokazImportSlowek = () => ImportSlowek.recznie();
+
+// ---------- most do wtyczki Chrome ----------
+window.addEventListener('message', (e) => {
+  if (e.source !== window || !e.data || typeof e.data !== 'object') return;
+  if (e.data.typ === 'LINGREADER_PING') {
+    window.postMessage({ typ: 'LINGREADER_PONG', wersja: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?') }, '*');
+    return;
+  }
+  if (e.data.typ === 'LINGREADER_IMPORT') {
+    window.postMessage({ typ: 'LINGREADER_IMPORT_ACK' }, '*');
+    ImportSlowek.przyjmij(e.data.paczka || e.data);
+  }
+});
 
 // ============================================================
 // FLASHCARDS (SM-2)
