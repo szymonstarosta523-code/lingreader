@@ -370,6 +370,18 @@ body.focus-mode .focus-toggle-btn { background: var(--accent2); color: white; }
   border-radius: 4px; font-size: 14px; color: var(--text2); transition: all .15s;
 }
 .vocab-action-btn:hover { background: rgba(255,255,255,0.1); }
+/* Puste miejsce po miniaturze zamienione w przycisk "dodaj zdjecie" */
+.vocab-brak-img {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 4px; margin-right: 6px;
+  vertical-align: middle; cursor: pointer; font-size: 13px; line-height: 1;
+  border: 1px dashed var(--accent2); color: var(--accent2);
+  background: rgba(83,52,131,0.12); transition: all 0.15s; flex-shrink: 0;
+}
+.vocab-brak-img:hover {
+  background: var(--accent2); color: #fff; border-style: solid; transform: scale(1.1);
+}
+.vocab-table tr.bez-obrazka td:nth-child(3) { position: relative; }
 .vocab-action-btn.edit-btn:hover { color: var(--accent2); }
 .vocab-action-btn.delete-btn:hover { color: var(--accent); }
 .vocab-edit-modal {
@@ -1521,7 +1533,6 @@ body.focus-mode .reader-content { max-width: 1000px; }
     <div class="nav-item" data-view="vocabulary">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       Słownik
-      <span class="nav-badge" id="vocab-count">0</span>
     </div>
     <div class="nav-item" data-view="flashcards">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 4v16"/></svg>
@@ -1683,6 +1694,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
         <button class="filter-btn" data-filter="3">Uczę się 2</button>
         <button class="filter-btn" data-filter="4">Znane</button>
         <button class="filter-btn" data-filter="phrases" style="border-color:var(--accent2)">Frazy</button>
+        <button class="filter-btn" data-filter="bezobrazka" style="border-color:var(--accent2)" title="Słówka, do których nie ma jeszcze zdjęcia">&#128247; Bez zdjęcia <span id="licznik-bez-obrazka"></span></button>
         <input type="text" class="vocab-search" placeholder="Szukaj słowa..." id="vocab-search">
       </div>
       <div class="vocab-tags-filter" id="vocab-tags-filter"></div>
@@ -2053,8 +2065,20 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const APP_BUILD = '2026-08-02';
+
+// Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
+// to dziala dopiero po przeinstalowaniu aplikacji — a to zadziala od razu.
+// Na komputerze przegladarka po prostu odmawia i to jest w porzadku.
+(function zablokujOrientacje() {
+  try {
+    const o = screen && screen.orientation;
+    if (o && typeof o.lock === 'function') {
+      o.lock('portrait').catch(() => {});   // odmowa na desktopie jest normalna
+    }
+  } catch (e) { /* nieobslugiwane — trudno */ }
+})();
 
 // Service worker dziala tylko po http/https — przy otwarciu pliku z dysku
 // (file://) przegladarka go nie uruchomi i to jest normalne.
@@ -4636,7 +4660,14 @@ async function renderVocabulary() {
   await renderVocabTagFilters();
   let words = await db.getAll('words');
 
-  if (vocabFilter === 'phrases') {
+  // licznik przy filtrze — widac od razu, ile slowek czeka na zdjecie
+  const bezObrazka = words.filter(w => !w.image).length;
+  const licznik = document.getElementById('licznik-bez-obrazka');
+  if (licznik) licznik.textContent = bezObrazka ? '(' + bezObrazka + ')' : '';
+
+  if (vocabFilter === 'bezobrazka') {
+    words = words.filter(w => !w.image);
+  } else if (vocabFilter === 'phrases') {
     words = words.filter(w => w.isPhrase);
   } else if (vocabFilter !== 'all') {
     words = words.filter(w => w.status === parseInt(vocabFilter));
@@ -4658,7 +4689,7 @@ async function renderVocabulary() {
     <tr data-word="${esc(w.word)}" data-idx="${idx}">
       <td><input type="checkbox" class="vocab-cb" data-word="${esc(w.word)}" data-idx="${idx}" onclick="vocabCheckboxClick(event, ${idx})"></td>
       <td><span class="status-dot" style="background:${statusColors[w.status] || '#666'}"></span> ${statusNames[w.status] || '?'}</td>
-      <td style="font-weight:600">${w.image ? '<img src="'+w.image+'" style="width:28px;height:28px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px">' : ''}${esc(w.word)}${w.isPhrase ? ' <span style="font-size:10px;background:var(--accent2);color:white;padding:1px 6px;border-radius:4px;font-weight:600;vertical-align:middle">FRAZA</span>' : (w.pos || DICT_POS[w.word] ? ' '+posHTML(w.pos || DICT_POS[w.word]) : '')}</td>
+      <td style="font-weight:600">${w.image ? '<img src="'+w.image+'" style="width:28px;height:28px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px" onclick="dodajZdjecieDoSlowka(this.dataset.w)" data-w="'+esc(w.word)+'" title="Zmień zdjęcie">' : '<span class="vocab-brak-img" onclick="dodajZdjecieDoSlowka(this.dataset.w)" data-w="'+esc(w.word)+'" title="Dodaj zdjęcie — otworzy się okno z Grafiką Google">&#128247;</span>'}${esc(w.word)}${w.isPhrase ? ' <span style="font-size:10px;background:var(--accent2);color:white;padding:1px 6px;border-radius:4px;font-weight:600;vertical-align:middle">FRAZA</span>' : (w.pos || DICT_POS[w.word] ? ' '+posHTML(w.pos || DICT_POS[w.word]) : '')}</td>
       <td style="color:var(--accent)">${esc(w.translation || '-')}</td>
       <td style="font-size:12px;color:var(--text2);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.context || '-')}</td>
       <td style="font-size:11px">${(w.tags||[]).map(t => '<span class="tag-chip active" style="font-size:10px;padding:1px 6px">'+esc(t)+'</span>').join(' ')}</td>
@@ -4772,6 +4803,17 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// Zdjecie prosto z listy slownika — bez wchodzenia w edycje.
+// Korzysta z tego samego okna co czytnik, wiec ma przycisk Grafiki Google,
+// przeciaganie i Ctrl+V.
+window.dodajZdjecieDoSlowka = (slowo) => {
+  if (!slowo) return;
+  openImagePicker(slowo, async () => {
+    await renderVocabulary();
+    await updateBadges();
+  });
+};
 
 // --- Edit word in vocabulary ---
 window.editWord = async (word) => {
@@ -7552,8 +7594,10 @@ async function renderStats() {
 async function updateBadges() {
   const words = await db.getAll('words');
   const reviewable = await db.getWordsForReview();
-  document.getElementById('vocab-count').textContent = words.length;
-  document.getElementById('review-count').textContent = reviewable.length;
+  // Licznik przy Slowniku celowo usuniety — przy duzej bazie tylko przeszkadzal.
+  // Przy Fiszkach zostaje, bo pokazuje ile powtorek czeka DZIS.
+  const licznikFiszek = document.getElementById('review-count');
+  if (licznikFiszek) licznikFiszek.textContent = reviewable.length;
 }
 
 // ============================================================
