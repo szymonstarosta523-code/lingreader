@@ -444,6 +444,14 @@ body.focus-mode .focus-toggle-btn { background: var(--accent2); color: white; }
   width: 100%; padding: 6px 9px; background: var(--bg1); color: var(--text);
   border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; font-size: 13px;
 }
+.gimg-tryby { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.gimg-etykieta { font-size: 11px; color: var(--text2); }
+.gimg-chip {
+  border: 1px solid rgba(255,255,255,0.14); background: transparent; color: var(--text2);
+  border-radius: 20px; padding: 3px 10px; font-size: 11px; cursor: pointer;
+}
+.gimg-chip:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+.gimg-chip.akt { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 600; }
 .import-pole { display: flex; gap: 6px; align-items: center; }
 .import-pole .import-tlum { flex: 1; min-width: 0; }
 .import-diki {
@@ -2183,7 +2191,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.10.3';
 const APP_BUILD = '2026-08-03';
 
 // Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
@@ -5225,6 +5233,8 @@ window.editWord = async (word) => {
   overlay.innerHTML = `
     <div class="vocab-edit-box">
       <h3>Edytuj: ${esc(entry.word)}</h3>
+      <label>Słowo (EN)</label>
+      <input type="text" id="edit-word" value="${esc(entry.word)}" autocomplete="off" spellcheck="false">
       <label>Tłumaczenie</label>
       <div class="import-pole" style="margin-bottom:14px">
         <input type="text" id="edit-translation" value="${esc(entry.translation || '')}" style="margin-bottom:0">
@@ -5274,12 +5284,36 @@ window.editWord = async (word) => {
   };
 
   overlay.querySelector('#edit-save').onclick = async () => {
+    // zmiana samego slowa = nowy klucz w bazie: kasujemy stary wpis
+    // (zostawia nagrobek dla synchronizacji) i zapisujemy pod nowa nazwa
+    const stareSlowo = entry.word;
+    const noweSlowo = document.getElementById('edit-word').value
+      .replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!noweSlowo) { alert('Słowo nie może być puste.'); return; }
+    if (noweSlowo !== stareSlowo) {
+      const kolizja = await db.get('words', noweSlowo);
+      if (kolizja) {
+        alert('Masz już w słowniku „' + noweSlowo + '". Najpierw usuń jedno z nich.');
+        return;
+      }
+      await db.delete('words', stareSlowo);
+      entry.word = noweSlowo;
+      entry.isPhrase = noweSlowo.includes(' ');
+    }
     entry.translation = document.getElementById('edit-translation').value.trim();
     entry.status = parseInt(document.getElementById('edit-status').value);
     entry.context = document.getElementById('edit-context').value.trim();
     entry.tags = document.getElementById('edit-tags').value.split(',').map(t => t.trim()).filter(t => t);
     await db.put('words', entry);
+    if (typeof Sync !== 'undefined' && Sync.zaplanujWysylke) Sync.zaplanujWysylke();
     overlay.remove();
+    if (noweSlowo !== stareSlowo) {
+      document.querySelectorAll('.word').forEach(el => {
+        if (el.dataset.word === stareSlowo) {
+          el.classList.remove('status-1', 'status-2', 'status-3', 'status-4');
+        }
+      });
+    }
     // Update word highlights in reader
     document.querySelectorAll('.word').forEach(el => {
       if (el.dataset.word === entry.word.toLowerCase()) {
@@ -6981,13 +7015,106 @@ function attachImagePaste(box, onImage) {
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 
+// ---- Zapytanie do Grafiki Google ----------------------------------------
+// Szukamy po angielsku — wyniki sa trafniejsze. Zeby nie wciagalo plakatow
+// filmowych, okladek plyt i logotypow, doklejamy odsiew slow-smieci i filtr
+// "tylko zdjecia". Gdy angielskie zapytanie mimo to trafi w popkulture,
+// jednym klikiem przelaczasz sie na polskie albo na rysunek.
+const GRAFIKA = {
+  ODSIEW: '-poster -album -cover -logo -movie -film -tshirt -meme -wallpaper',
+
+  TRYBY: [
+    { k: 'en',      n: 'po angielsku' },
+    { k: 'pl',      n: 'po polsku' },
+    { k: 'rysunek', n: 'rysunek' }
+  ],
+
+  tryb() {
+    const t = localStorage.getItem('lr-gimg-tryb');
+    return this.TRYBY.some(x => x.k === t) ? t : 'en';
+  },
+  ustawTryb(t) { localStorage.setItem('lr-gimg-tryb', t); },
+  nazwaTrybu(k) { const t = this.TRYBY.find(x => x.k === k); return t ? t.n : k; },
+
+  // pierwsze, czyste znaczenie po polsku — bez wariantow po ukosniku,
+  // bez nawiasow i bez awaryjnych definicji [EN]
+  _pl(slowo, podpowiedz) {
+    let raw = podpowiedz;
+    if (!raw && typeof DICT !== 'undefined') raw = DICT[String(slowo || '').toLowerCase()];
+    raw = String(raw || '').trim();
+    if (!raw || raw.indexOf('[EN]') === 0) return '';
+    let t = raw.split('/')[0].split(',')[0].split(';')[0];
+    t = t.replace(/\([^)]*\)/g, ' ').replace(/^[^:]*:\s*/, '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 40) return '';
+    if (t.toLowerCase() === String(slowo || '').toLowerCase()) return '';
+    return t;
+  },
+
+  // ktory tryb faktycznie zostanie uzyty
+  rozstrzygnij(slowo, opcje) {
+    opcje = opcje || {};
+    return (opcje && opcje.tryb) || this.tryb();
+  },
+
+  zapytanie(slowo, opcje) {
+    opcje = opcje || {};
+    const s = String(slowo || '').trim();
+    if (!s) return '';
+    const tryb = this.rozstrzygnij(s, opcje);
+    const pl = this._pl(s, opcje.translation);
+    if (tryb === 'pl' && pl) return pl + ' ' + this.ODSIEW;
+    if (tryb === 'rysunek') return s + ' simple illustration icon white background';
+    return s + ' ' + this.ODSIEW;
+  },
+
+  url(slowo, opcje) {
+    const q = this.zapytanie(slowo, opcje);
+    if (!q) return '';
+    const filtr = this.rozstrzygnij(slowo, opcje) === 'rysunek' ? 'itp:clipart' : 'itp:photo';
+    return 'https://www.google.com/search?udm=2&tbs=' + filtr + '&q=' + encodeURIComponent(q);
+  }
+};
+window.GRAFIKA = GRAFIKA;
+
+// Pasek wyboru trybu — ten sam w oknie obrazka, w dodawaniu slowka
+// i w oknie fiszki z drzewka. Wybor zapamietuje sie na stale.
+function chipyGrafikiHTML(id) {
+  return '<div class="aw-hint-row gimg-tryby" id="' + id + '">' +
+    '<span class="gimg-etykieta">szukaj:</span>' +
+    GRAFIKA.TRYBY.map(t => '<button type="button" class="gimg-chip" data-tryb="' + t.k + '">' + t.n + '</button>').join('') +
+    '</div>';
+}
+
+function podepnijChipyGrafiki(root, id, dajSlowo, dajTlumaczenie) {
+  const box = root.querySelector('#' + id);
+  if (!box) return () => {};
+  const opcje = () => ({ translation: dajTlumaczenie ? dajTlumaczenie() : '' });
+  const odswiez = () => {
+    const akt = GRAFIKA.tryb();
+    box.querySelectorAll('.gimg-chip').forEach(b => b.classList.toggle('akt', b.dataset.tryb === akt));
+    const s = dajSlowo();
+    box.title = s ? 'Google dostanie: ' + GRAFIKA.zapytanie(s, opcje()) : '';
+  };
+  box.addEventListener('click', (e) => {
+    const t = e.target && e.target.dataset ? e.target.dataset.tryb : null;
+    if (!t) return;
+    GRAFIKA.ustawTryb(t);
+    odswiez();
+    const s = dajSlowo();
+    if (s) openGoogleImagesWindow(s, opcje());
+  });
+  odswiez();
+  return odswiez;
+}
+
 // ---- Google Images in a side window -------------------------------------
 // Always reuses the same window (name 'lr-google-images'), so repeated
 // searches replace its content instead of opening a pile of popups.
-function openGoogleImagesWindow(query) {
+function openGoogleImagesWindow(query, opcje) {
   const q = (query || '').trim();
   if (!q) return null;
-  const url = 'https://www.google.com/search?udm=2&q=' + encodeURIComponent(q);
+  const url = GRAFIKA.url(q, opcje || {});
+  if (!url) return null;
   const w = Math.max(520, Math.min(900, Math.round((screen.availWidth || 1280) * 0.48)));
   const h = Math.round((screen.availHeight || 800) * 0.92);
   let win = null;
@@ -7425,6 +7552,7 @@ window.showFamilyWordModal = (word, onAdded) => {
         <div class="aw-hint-row">
           <button type="button" class="aw-gbtn" id="fw-gimg">&#128269; Grafika Google: ${esc(w)}</button>
         </div>
+        ${chipyGrafikiHTML('fw-gimg-tryby')}
         Przeciągnij zdjęcie z okna Google tutaj &nbsp;•&nbsp;
         albo <b>prawy klik → Kopiuj obraz</b> i <b>Ctrl+V</b>
       </div>
@@ -7528,11 +7656,13 @@ window.showFamilyWordModal = (word, onAdded) => {
     showImg(b64, 'z pliku');
     setNote('✓ obrazek gotowy (zapisany offline)', 'ok');
   });
+  const tlumFw = () => { const p = $$('fw-trans'); return p ? p.value.trim() : ''; };
   $$('fw-gimg').addEventListener('click', () => {
-    if (!openGoogleImagesWindow(w)) {
+    if (!openGoogleImagesWindow(w, { translation: tlumFw() })) {
       setNote('⚠ przeglądarka zablokowała nowe okno — zezwól na wyskakujące okna dla tej strony.', 'warn');
     }
   });
+  podepnijChipyGrafiki(document, 'fw-gimg-tryby', () => w, tlumFw);
 
   $$('fw-save').addEventListener('click', async () => {
     const btn = $$('fw-save');
@@ -7609,6 +7739,7 @@ window.showAddWordModal = () => {
         <div class="aw-hint-row">
           <button type="button" class="aw-gbtn" id="aw-gimg-btn" disabled>&#128269; Otwórz Grafikę Google</button>
         </div>
+        ${chipyGrafikiHTML('aw-gimg-tryby')}
         <div class="aw-hint-row">
           <label class="aw-auto" title="Okno Google otworzy się samo, gdy tylko wpiszesz słowo">
             <input type="checkbox" id="aw-gimg-auto"> otwieraj automatycznie
@@ -7966,13 +8097,20 @@ window.showAddWordModal = () => {
     if (t.length < 2) { if (force) wordInput.focus(); return; }
     if (!force && t === lastGoogleQuery) return;
     lastGoogleQuery = t;
-    const win = openGoogleImagesWindow(t);
+    const polePl = document.getElementById('add-word-trans');
+    const win = openGoogleImagesWindow(t, { translation: polePl ? polePl.value.trim() : '' });
     if (!win) {
       setNote('⚠ przeglądarka zablokowała nowe okno — kliknij „Otwórz Grafikę Google" ręcznie (albo zezwól na wyskakujące okna dla tej strony).', 'warn');
     }
   }
 
   gBtn.addEventListener('click', () => openGoogle(true));
+  const odswiezChipyAw = podepnijChipyGrafiki(
+    overlay, 'aw-gimg-tryby',
+    () => searchTerm(),
+    () => { const p = document.getElementById('add-word-trans'); return p ? p.value.trim() : ''; }
+  );
+  wordInput.addEventListener('input', odswiezChipyAw);
 
   // Enter in the English field = "wpisałem słowo, pokaż mi obrazki"
   wordInput.addEventListener('keydown', (e) => {
@@ -25537,6 +25675,8 @@ function fileToBase64(file) {
 window.openImagePicker = async (wordOverride, onSaved) => {
   const word = (typeof wordOverride === 'string' && wordOverride) ? wordOverride : currentPopupWord;
   if (!word) return;
+  const wpisSlowa = await db.get('words', word).catch(() => null);
+  const tlumSlowa = () => (wpisSlowa && wpisSlowa.translation) || '';
 
   const overlay = document.createElement('div');
   overlay.className = 'img-picker-overlay';
@@ -25551,6 +25691,7 @@ window.openImagePicker = async (wordOverride, onSaved) => {
         <div class="aw-hint-row">
           <button type="button" class="aw-gbtn" id="img-gimg-btn">&#128269; Grafika Google: ${esc(word)}</button>
         </div>
+        ${chipyGrafikiHTML('img-gimg-tryby')}
         Przeciągnij zdjęcie z okna Google wprost tutaj &nbsp;•&nbsp;
         albo <b>prawy klik → Kopiuj obraz</b> i <b>Ctrl+V</b>
       </div>
@@ -25621,10 +25762,11 @@ window.openImagePicker = async (wordOverride, onSaved) => {
   attachImageDrop(overlay, applyPickDrop, overlay.querySelector('.img-picker-box'));
   attachImagePaste(overlay, applyPickDrop);
   overlay.querySelector('#img-gimg-btn').addEventListener('click', () => {
-    if (!openGoogleImagesWindow(word)) {
+    if (!openGoogleImagesWindow(word, { translation: tlumSlowa() })) {
       setPickNote('⚠ przeglądarka zablokowała nowe okno — zezwól na wyskakujące okna dla tej strony.', 'warn');
     }
   });
+  podepnijChipyGrafiki(overlay, 'img-gimg-tryby', () => word, tlumSlowa);
 
   // Custom file upload
   overlay.querySelector('#img-custom-file').addEventListener('change', async (e) => {
