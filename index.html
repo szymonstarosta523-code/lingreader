@@ -11,7 +11,10 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>LingReader</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%238b5cf6'/%3E%3Cstop offset='100%25' stop-color='%236366f1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%231a1a2e'/%3E%3Cpath d='M12 16 C12 12 16 10 20 10 L30 10 L30 48 L20 48 C16 48 12 46 12 42Z' fill='url(%23g)' opacity='0.8'/%3E%3Cpath d='M52 16 C52 12 48 10 44 10 L34 10 L34 48 L44 48 C48 48 52 46 52 42Z' fill='url(%23g)' opacity='0.6'/%3E%3Cpath d='M30 10 L32 8 L34 10 L34 48 L32 50 L30 48Z' fill='%23a78bfa'/%3E%3Ctext x='32' y='37' font-family='Georgia,serif' font-size='22' font-weight='bold' fill='white' text-anchor='middle'%3ELR%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="shortcut icon" href="icon-192.png">
 <style>
 :root {
   --bg: #1a1a2e;
@@ -1505,6 +1508,38 @@ body.focus-mode .reader-content { max-width: 1000px; }
 }
 .lr-update-bar button.drugi { background: rgba(255,255,255,0.08); color: var(--text2); }
 
+/* === EKRAN ĆWICZEŃ === */
+.cw-siatka {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px;
+}
+.cw-kafel {
+  background: var(--card-bg); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 16px 16px 14px; cursor: pointer;
+  transition: all 0.15s; display: flex; flex-direction: column; gap: 6px;
+}
+.cw-kafel:hover { border-color: var(--accent2); transform: translateY(-2px); }
+.cw-kafel h4 { font-size: 14px; color: var(--text); margin: 0; display: flex; align-items: center; gap: 8px; }
+.cw-kafel p { font-size: 12px; color: var(--text2); margin: 0; line-height: 1.5; }
+.cw-kafel .cw-ikona { font-size: 17px; }
+.cw-kafel .cw-postep { font-size: 11px; color: var(--accent2); font-weight: 600; margin-top: 4px; }
+.cw-dzial {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text2);
+  opacity: 0.6; margin: 22px 0 10px; grid-column: 1/-1;
+}
+.cw-dzial:first-child { margin-top: 0; }
+@media (max-width: 820px) {
+  .cw-siatka { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cw-kafel { padding: 13px 12px; }
+  .cw-kafel h4 { font-size: 13px; }
+  .cw-kafel p { display: none; }
+}
+
+/* Zdanie czytane na glos — podswietlenie na czas czytania */
+.zdanie-czytane {
+  background: rgba(83,52,131,0.42); border-radius: 4px;
+  transition: background 0.2s;
+}
+
 /* Dyskretny znak, ze aplikacja wlasnie zapisuje zmiany w chmurze.
    Bez tekstu i bez zaslaniania czegokolwiek. */
 .lr-sync-kropka {
@@ -1563,10 +1598,9 @@ body.focus-mode .reader-content { max-width: 1000px; }
       PubMed
     </div>
 
-    <!-- HIDDEN NAV ITEMS (kept for future use) -->
-    <div style="display:none">
-    <div class="nav-item" data-view="spacedreading">Powtórka lektur</div>
-    <div class="nav-item" data-view="writing">Pisanie</div>
+    <div class="nav-item" data-view="cwiczenia">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
+      Ćwiczenia
     </div>
 
     <!-- HIDDEN MODULES (kept for future use) -->
@@ -1706,6 +1740,9 @@ body.focus-mode .reader-content { max-width: 1000px; }
         <button class="filter-btn" data-filter="4">Znane</button>
         <button class="filter-btn" data-filter="phrases" style="border-color:var(--accent2)">Frazy</button>
         <button class="filter-btn" data-filter="bezobrazka" style="border-color:var(--accent2)" title="Słówka, do których nie ma jeszcze zdjęcia">&#128247; Bez zdjęcia <span id="licznik-bez-obrazka"></span></button>
+        <button class="filter-btn" data-filter="beztlumaczenia" style="border-color:var(--accent)" title="Słówka bez tłumaczenia — fiszka z nich nie zadziała">&#10060; Bez tłumaczenia <span id="licznik-bez-tlum"></span></button>
+        <button class="filter-btn" data-filter="bezkontekstu" style="border-color:rgba(255,255,255,0.2)" title="Brak przykładowego zdania">&#128196; Bez kontekstu <span id="licznik-bez-ktx"></span></button>
+        <button class="filter-btn" data-filter="trudne" style="border-color:var(--learning1-color)" title="Słówka, które regularnie oblewasz — warto je przerobić inaczej">&#128293; Trudne <span id="licznik-trudne"></span></button>
         <input type="text" class="vocab-search" placeholder="Szukaj słowa..." id="vocab-search">
       </div>
       <div class="vocab-tags-filter" id="vocab-tags-filter"></div>
@@ -1759,7 +1796,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
   </div>
 
   <!-- HIDDEN MODULE VIEWS (kept for future use) -->
-  <div id="hidden-module-views" style="display:none">
+  <div id="hidden-module-views">
 
   <!-- IRREGULAR VERBS VIEW -->
   <div class="view" id="view-irregularverbs">
@@ -1831,6 +1868,17 @@ body.focus-mode .reader-content { max-width: 1000px; }
   </div>
 
   </div><!-- END HIDDEN MODULE VIEWS -->
+
+  <!-- ĆWICZENIA — rozdzielacz do modułów -->
+  <div class="view" id="view-cwiczenia">
+    <div class="view-header">
+      <h1>Ćwiczenia</h1>
+      <span style="font-size:12px;color:var(--text2);margin-left:auto" id="cw-podsumowanie"></span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:20px 28px">
+      <div class="cw-siatka" id="cw-siatka"></div>
+    </div>
+  </div>
 
   <!-- CASE REPORTS VIEW -->
   <div class="view" id="view-casereports">
@@ -2025,6 +2073,9 @@ body.focus-mode .reader-content { max-width: 1000px; }
   <div style="display:flex;align-items:center;margin-bottom:4px">
     <div class="popup-word" id="popup-word" style="margin-bottom:0"></div>
     <span class="popup-type" id="popup-type"></span>
+    <button class="speak-btn" id="popup-speak-zdanie" title="Przeczytaj całe zdanie">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M3 12h13"/><path d="M3 18h9"/></svg>
+    </button>
     <button class="speak-btn" id="popup-speak-btn" title="Wymów">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
     </button>
@@ -2078,7 +2129,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.1';
 const APP_BUILD = '2026-08-02';
 
 // Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
@@ -3342,6 +3393,7 @@ function switchView(view) {
     if (typeof syncPokazKroki === 'function') syncPokazKroki();
     if (typeof odswiezInfoODanych === 'function') odswiezInfoODanych();
   }
+  if (view === 'cwiczenia') renderCwiczenia();
   if (view === 'vocabulary') renderVocabulary();
   if (view === 'flashcards') renderFlashcards();
   if (view === 'stats') renderStats();
@@ -3357,6 +3409,80 @@ function switchView(view) {
   if (view === 'articles' && typeof Articles !== 'undefined') Articles.renderMain();
   if (view === 'writing' && typeof WritingPractice !== 'undefined') WritingPractice.renderMain();
   if (view === 'spacedreading' && typeof SpacedReading !== 'undefined') SpacedReading.renderMain();
+}
+
+// ============================================================
+// EKRAN ĆWICZEŃ — jeden rozdzielacz zamiast jedenastu pozycji w menu
+// ============================================================
+const CWICZENIA = [
+  { dzial: 'Słownictwo' },
+  { v: 'phrasalverbs',   i: '🔗', t: 'Phrasal verbs',        o: 'Czasowniki złożone pogrupowane po bazie — get, take, put.', k: 'lr-pv-progress' },
+  { v: 'collocations',   i: '🧩', t: 'Kolokacje',            o: 'Które słowa chodzą ze sobą w parze: make a decision, heavy rain.', k: 'lr-colloc-progress' },
+  { v: 'confusingwords', i: '🔄', t: 'Mylące słowa',         o: 'Pary, które łatwo pomylić: affect i effect, lie i lay.', k: 'lr-confusing-progress' },
+  { v: 'idioms',         i: '💬', t: 'Idiomy i slang',       o: 'Wyrażenia, których nie da się przetłumaczyć dosłownie.', k: 'lr-idioms-progress' },
+  { v: 'wordformation',  i: '🌱', t: 'Słowotwórstwo',        o: 'Przedrostki i przyrostki, w tym medyczne: hepato-, -itis.', k: 'lr-wf-progress' },
+  { v: 'irregularverbs', i: '⚡', t: 'Czasowniki nieregularne', o: '127 czasowników w trzech formach, z ćwiczeniami.', k: 'lr-irreg-progress' },
+  { dzial: 'Gramatyka w praktyce' },
+  { v: 'prepositions',   i: '📍', t: 'Przyimki',             o: 'in, on, at — czas, miejsce, ruch. Zmora Polaków.', k: 'lr-prep-progress' },
+  { v: 'articles',       i: '🅰', t: 'Przedimki',            o: 'a, an, the — czyli to, czego nie mamy w polskim.', k: 'lr-art-progress' },
+  { v: 'sentencebuilder',i: '🧱', t: 'Budowanie zdań',       o: 'Układanie zdania z rozsypanych słów, od A1 do C1.', k: 'lr-sb-progress' },
+  { dzial: 'Produkcja i powtórki' },
+  { v: 'writing',        i: '✍', t: 'Pisanie',               o: 'Maile, opisy, argumentacja — z podpowiedziami i checklistą.', k: 'lr-writing-progress' },
+  { v: 'spacedreading',  i: '📖', t: 'Powtórka lektur',      o: 'Które książki warto powtórzyć, licząc po Twoich słówkach.' }
+];
+
+function policzPostep(klucz) {
+  if (!klucz) return null;
+  try {
+    const dane = JSON.parse(localStorage.getItem(klucz) || 'null');
+    if (!dane) return null;
+    if (Array.isArray(dane)) return dane.length;
+    if (typeof dane === 'object') return Object.keys(dane).length || null;
+  } catch (e) {}
+  return null;
+}
+
+function renderCwiczenia() {
+  const siatka = document.getElementById('cw-siatka');
+  if (!siatka) return;
+  siatka.innerHTML = '';
+  let zRuszonych = 0, wszystkich = 0;
+
+  CWICZENIA.forEach(m => {
+    if (m.dzial) {
+      const d = document.createElement('div');
+      d.className = 'cw-dzial';
+      d.textContent = m.dzial;
+      siatka.appendChild(d);
+      return;
+    }
+    wszystkich++;
+    const post = policzPostep(m.k);
+    if (post) zRuszonych++;
+
+    const kafel = document.createElement('div');
+    kafel.className = 'cw-kafel';
+    const h = document.createElement('h4');
+    const ik = document.createElement('span');
+    ik.className = 'cw-ikona'; ik.textContent = m.i;
+    h.appendChild(ik);
+    h.appendChild(document.createTextNode(m.t));
+    const p = document.createElement('p');
+    p.textContent = m.o;
+    kafel.appendChild(h);
+    kafel.appendChild(p);
+    if (post) {
+      const sp = document.createElement('div');
+      sp.className = 'cw-postep';
+      sp.textContent = 'zaczęte — ' + post + ' poz.';
+      kafel.appendChild(sp);
+    }
+    kafel.addEventListener('click', () => switchView(m.v));
+    siatka.appendChild(kafel);
+  });
+
+  const pod = document.getElementById('cw-podsumowanie');
+  if (pod) pod.textContent = zRuszonych ? 'rozpoczęte: ' + zRuszonych + ' z ' + wszystkich : wszystkich + ' modułów';
 }
 
 // ============================================================
@@ -4869,13 +4995,24 @@ async function renderVocabulary() {
   await renderVocabTagFilters();
   let words = await db.getAll('words');
 
-  // licznik przy filtrze — widac od razu, ile slowek czeka na zdjecie
-  const bezObrazka = words.filter(w => !w.image).length;
-  const licznik = document.getElementById('licznik-bez-obrazka');
-  if (licznik) licznik.textContent = bezObrazka ? '(' + bezObrazka + ')' : '';
+  // KOLEJKI PORZADKOWE — liczniki widoczne od razu przy filtrach.
+  // "Trudne" to slowka z niskim wspolczynnikiem latwosci SM-2: algorytm
+  // obnizna go przy kazdej pomylce, wiec ponizej 1.9 oznacza serie wpadek.
+  const jestTrudne = (w) => (w.repetitions || 0) >= 2 && (w.easeFactor || 2.5) < 1.9;
+  const ustaw = (id, n) => { const e = document.getElementById(id); if (e) e.textContent = n ? '(' + n + ')' : ''; };
+  ustaw('licznik-bez-obrazka', words.filter(w => !w.image).length);
+  ustaw('licznik-bez-tlum',    words.filter(w => !w.translation || !w.translation.trim()).length);
+  ustaw('licznik-bez-ktx',     words.filter(w => !w.context || !w.context.trim()).length);
+  ustaw('licznik-trudne',      words.filter(jestTrudne).length);
 
   if (vocabFilter === 'bezobrazka') {
     words = words.filter(w => !w.image);
+  } else if (vocabFilter === 'beztlumaczenia') {
+    words = words.filter(w => !w.translation || !w.translation.trim());
+  } else if (vocabFilter === 'bezkontekstu') {
+    words = words.filter(w => !w.context || !w.context.trim());
+  } else if (vocabFilter === 'trudne') {
+    words = words.filter(jestTrudne).sort((a, b) => (a.easeFactor || 2.5) - (b.easeFactor || 2.5));
   } else if (vocabFilter === 'phrases') {
     words = words.filter(w => w.isPhrase);
   } else if (vocabFilter !== 'all') {
@@ -16743,7 +16880,13 @@ const WordFormation = {
 
     const stats = this.getStats();
     const masteredCount = Object.values(this.progress).filter(p => p.mastered).length;
-    const totalCount = Object.values(this.progress).length || 0;
+    // Mianownik musi liczyc WSZYSTKO, co jest do opanowania, a nie wpisy
+    // w postepie — te na starcie sa puste, wiec wychodzilo "0/0".
+    const totalCount = (this.prefixes || []).length
+      + (this.medicalPrefixes || []).length
+      + (this.medicalSuffixes || []).length
+      + Object.keys(this.suffixes || {}).reduce((n, k) => n + (this.suffixes[k] || []).length, 0)
+      + (this.wordFamilies || []).length;
 
     container.innerHTML = `
       <div class="wf-container">
@@ -24511,6 +24654,23 @@ const TTS = {
     btn.style.color = this.muted ? 'var(--accent)' : 'var(--text2)';
   },
 
+  // Cale zdanie czyta sie wolniej niz pojedyncze slowo — inaczej zlewa sie w papke.
+  speakSentence(text, btnElement) {
+    if (!this.synth || !text || this.muted) return;
+    this.synth.cancel();
+    const u = new SpeechSynthesisUtterance(String(text).replace(/^[\s.…-]+/, '').slice(0, 400));
+    u.lang = 'en-US';
+    if (this.englishVoice) u.voice = this.englishVoice;
+    u.rate = 0.85;
+    u.pitch = 1.0;
+    if (btnElement) {
+      btnElement.classList.add('speaking');
+      u.onend = () => btnElement.classList.remove('speaking');
+      u.onerror = () => btnElement.classList.remove('speaking');
+    }
+    this.synth.speak(u);
+  },
+
   speak(text, btnElement) {
     if (!this.synth || !text || this.muted) return;
     this.synth.cancel(); // stop any current speech
@@ -24531,12 +24691,89 @@ const TTS = {
   }
 };
 
+// Czytanie calego zdania z popupu — kontekst jest tam juz wyswietlony
+document.getElementById('popup-speak-zdanie').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const zdanie = document.getElementById('popup-context').textContent;
+  if (zdanie && zdanie.trim()) TTS.speakSentence(zdanie, e.currentTarget);
+});
+
 // Hook up popup speak button
 document.getElementById('popup-speak-btn').addEventListener('click', (e) => {
   e.stopPropagation();
   const word = currentPopupWord;
   if (word) TTS.speak(word, e.currentTarget);
 });
+
+// ============================================================
+// CZYTANIE ZDANIA NA GLOS — tylko na dotyk
+// ============================================================
+// Krotkie dotkniecie slowa dziala jak dotad (popup ze slowem). Przytrzymanie
+// palca przez pol sekundy czyta na glos cale zdanie spod palca i podswietla
+// akapit na czas czytania. Przewiniecie ekranu anuluje.
+(function czytanieZdanNaDotyk() {
+  const tresc = document.getElementById('reader-content');
+  if (!tresc) return;
+
+  let timer = null, startX = 0, startY = 0, czytano = false;
+
+  function zdanieZPunktu(el) {
+    const akapit = el.closest ? (el.closest('p, li, blockquote, h1, h2, h3') || el.parentElement) : el.parentElement;
+    if (!akapit) return null;
+    const pelny = (akapit.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!pelny) return null;
+    const slowo = (el.dataset && el.dataset.word) ? el.dataset.word : String(el.textContent || '').trim();
+    const zdania = pelny.match(/[^.!?]+[.!?]*/g) || [pelny];
+    if (slowo) {
+      const trafione = zdania.find(z => z.toLowerCase().indexOf(slowo.toLowerCase()) !== -1);
+      if (trafione && trafione.trim().length > 1) return { tekst: trafione.trim(), akapit: akapit };
+    }
+    return { tekst: zdania[0].trim(), akapit: akapit };
+  }
+
+  function czytaj(el) {
+    const z = zdanieZPunktu(el);
+    if (!z || !z.tekst) return;
+    czytano = true;
+    z.akapit.classList.add('zdanie-czytane');
+    setTimeout(function () { z.akapit.classList.remove('zdanie-czytane'); },
+               Math.min(15000, 800 + z.tekst.length * 65));
+    TTS.speakSentence(z.tekst);
+  }
+
+  tresc.addEventListener('touchstart', function (e) {
+    if (!e.touches || e.touches.length !== 1) return;
+    czytano = false;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    const cel = e.target;
+    clearTimeout(timer);
+    timer = setTimeout(function () { czytaj(cel); }, 550);
+  }, { passive: true });
+
+  tresc.addEventListener('touchmove', function (e) {
+    if (!e.touches || !e.touches.length) return;
+    if (Math.abs(e.touches[0].clientX - startX) > 10 ||
+        Math.abs(e.touches[0].clientY - startY) > 10) clearTimeout(timer);
+  }, { passive: true });
+
+  tresc.addEventListener('touchend', function (e) {
+    clearTimeout(timer);
+    if (czytano) { e.preventDefault(); czytano = false; }   // nie otwieramy popupu po odczytaniu
+  });
+
+  tresc.addEventListener('touchcancel', function () { clearTimeout(timer); });
+
+  // Na komputerze: prawy przycisk myszy na slowie czyta jego zdanie
+  tresc.addEventListener('contextmenu', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('word')) {
+      e.preventDefault();
+      czytaj(e.target);
+    }
+  });
+
+  window.przeczytajZdanie = czytaj;
+})();
 
 // ============================================================
 // IMAGE SETTINGS (no API keys any more)

@@ -6,7 +6,7 @@
    to wystarczy, zeby telefon pobral nowe pliki.
    ============================================================ */
 
-const WERSJA = 'lr-v13';
+const WERSJA = 'lr-v16';
 const CACHE = 'lingreader-' + WERSJA;
 
 // Pliki, bez ktorych aplikacja nie ruszy — pobierane z gory.
@@ -17,7 +17,8 @@ const RDZEN = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
-  './apple-touch-icon.png'
+  './apple-touch-icon.png',
+  './favicon-32.png'
 ];
 
 self.addEventListener('install', (e) => {
