@@ -444,6 +444,15 @@ body.focus-mode .focus-toggle-btn { background: var(--accent2); color: white; }
   width: 100%; padding: 6px 9px; background: var(--bg1); color: var(--text);
   border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; font-size: 13px;
 }
+.import-pole { display: flex; gap: 6px; align-items: center; }
+.import-pole .import-tlum { flex: 1; min-width: 0; }
+.import-diki {
+  flex: none; border: none; cursor: pointer; border-radius: 7px;
+  padding: 7px 11px; font-size: 12px; font-weight: 600;
+  background: rgba(83, 52, 131, 0.55); color: #e8e2ff;
+}
+.import-diki:hover { background: rgba(83, 52, 131, 0.85); }
+.import-wiersz.szukany { outline: 2px solid var(--accent2); outline-offset: 2px; }
 .import-kontekst {
   font-size: 12px; color: var(--text2); font-style: italic;
   margin-top: 6px; line-height: 1.45;
@@ -2174,7 +2183,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.10.1';
 const APP_BUILD = '2026-08-03';
 
 // Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
@@ -5217,7 +5226,10 @@ window.editWord = async (word) => {
     <div class="vocab-edit-box">
       <h3>Edytuj: ${esc(entry.word)}</h3>
       <label>Tłumaczenie</label>
-      <input type="text" id="edit-translation" value="${esc(entry.translation || '')}">
+      <div class="import-pole" style="margin-bottom:14px">
+        <input type="text" id="edit-translation" value="${esc(entry.translation || '')}" style="margin-bottom:0">
+        <button type="button" class="import-diki" id="edit-diki" title="Otwórz to słowo w Diki.pl">Diki</button>
+      </div>
       <label>Status</label>
       <select id="edit-status">
         ${[1,2,3,4].map(s => `<option value="${s}" ${entry.status === s ? 'selected' : ''}>${statusNames[s]}</option>`).join('')}
@@ -5241,6 +5253,7 @@ window.editWord = async (word) => {
   overlay.querySelector('#edit-cancel').onclick = () => overlay.remove();
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   overlay.querySelector('#edit-translation').focus();
+  overlay.querySelector('#edit-diki').onclick = () => otworzDiki(entry.word);
 
   // ---- image ----
   const editImg = overlay.querySelector('#edit-img-preview');
@@ -5386,6 +5399,7 @@ const ImportSlowek = {
 
         <div class="import-pasek">
           <label class="import-mini"><input type="checkbox" id="import-wszystkie" checked> zaznacz wszystkie</label>
+          <button type="button" class="btn btn-sm import-btn-online" id="import-diki-start">Uzupełnij przez Diki</button>
           <button type="button" class="btn btn-sm import-btn-online" id="import-online">Uzupełnij tłumaczenia online</button>
           <span class="import-mini" id="import-postep"></span>
         </div>
@@ -5406,6 +5420,8 @@ const ImportSlowek = {
     const podtytul = overlay.querySelector('#import-podtytul');
     const przyciskZapisz = overlay.querySelector('#import-zapisz');
     const przyciskOnline = overlay.querySelector('#import-online');
+    const przyciskDiki = overlay.querySelector('#import-diki-start');
+    const postep = overlay.querySelector('#import-postep');
 
     const odswiezNaglowek = () => {
       const n = wiersze.filter(w => w.zaznaczone).length;
@@ -5419,6 +5435,8 @@ const ImportSlowek = {
       przyciskZapisz.style.opacity = n === 0 ? '0.5' : '';
       przyciskOnline.style.display = bez ? '' : 'none';
       przyciskOnline.textContent = 'Uzupełnij tłumaczenia online (' + bez + ')';
+      przyciskDiki.style.display = bez ? '' : 'none';
+      przyciskDiki.textContent = 'Uzupełnij przez Diki (' + bez + ')';
     };
 
     lista.innerHTML = wiersze.map((w, i) => `
@@ -5430,8 +5448,12 @@ const ImportSlowek = {
             ${w.pos ? `<span class="pos-badge ${esc(w.pos)}">${esc(w.pos)}</span>` : ''}
             ${w.byloWczesniej ? '<span class="import-znacznik">już w słowniku</span>' : ''}
           </div>
-          <input type="text" class="import-tlum" data-i="${i}" placeholder="tłumaczenie…"
-                 value="${esc(w.translation || '')}">
+          <div class="import-pole">
+            <input type="text" class="import-tlum" data-i="${i}" placeholder="tłumaczenie…"
+                   value="${esc(w.translation || '')}">
+            <button type="button" class="import-diki" data-diki="${i}"
+                    title="Otwórz to słowo w Diki.pl">Diki</button>
+          </div>
           ${w.context ? `<div class="import-kontekst">${esc(w.context)}</div>` : ''}
         </div>
       </div>`).join('');
@@ -5448,6 +5470,52 @@ const ImportSlowek = {
       if (i !== undefined && e.target.classList.contains('import-tlum')) wiersze[i].translation = e.target.value.trim();
     });
 
+    // ---- Diki: pojedyncze slowo i przechodzenie po brakach ----
+    const podswietl = (i) => {
+      lista.querySelectorAll('.import-wiersz.szukany').forEach(el => el.classList.remove('szukany'));
+      const wiersz = lista.querySelector(`.import-wiersz[data-i="${i}"]`);
+      if (wiersz) wiersz.classList.add('szukany');
+    };
+
+    const doSlowa = (i) => {
+      const pole = lista.querySelector(`.import-tlum[data-i="${i}"]`);
+      if (!pole) return;
+      podswietl(i);
+      pole.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      pole.focus();
+      otworzDiki(wiersze[i].word);
+      postep.textContent = 'Diki: ' + wiersze[i].word;
+    };
+
+    const nastepnyBrak = (od) => {
+      let i = wiersze.findIndex((w, idx) => idx > od && w.zaznaczone && !w.translation);
+      if (i === -1) i = wiersze.findIndex((w, idx) => idx <= od && w.zaznaczone && !w.translation);
+      if (i === -1) {
+        postep.textContent = 'wszystkie mają tłumaczenie ✓';
+        lista.querySelectorAll('.import-wiersz.szukany').forEach(el => el.classList.remove('szukany'));
+        return;
+      }
+      doSlowa(i);
+    };
+
+    przyciskDiki.addEventListener('click', () => nastepnyBrak(-1));
+
+    lista.addEventListener('click', (e) => {
+      const i = e.target.dataset && e.target.dataset.diki;
+      if (i === undefined) return;
+      doSlowa(parseInt(i, 10));
+    });
+
+    // Enter w polu tlumaczenia = zapisz i skocz do nastepnego braku
+    lista.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !e.target.classList.contains('import-tlum')) return;
+      e.preventDefault();
+      const i = parseInt(e.target.dataset.i, 10);
+      wiersze[i].translation = e.target.value.trim();
+      odswiezNaglowek();
+      nastepnyBrak(i);
+    });
+
     overlay.querySelector('#import-wszystkie').addEventListener('change', (e) => {
       wiersze.forEach(w => w.zaznaczone = e.target.checked);
       lista.querySelectorAll('.import-cb').forEach(cb => cb.checked = e.target.checked);
@@ -5457,7 +5525,6 @@ const ImportSlowek = {
     // ---- tlumaczenia online (MyMemory) ----
     przyciskOnline.addEventListener('click', async () => {
       const braki = wiersze.map((w, i) => ({ w, i })).filter(x => !x.w.translation);
-      const postep = overlay.querySelector('#import-postep');
       przyciskOnline.disabled = true;
       let zrobione = 0;
       for (const { w, i } of braki) {
@@ -6930,6 +6997,27 @@ function openGoogleImagesWindow(query) {
   if (win) { try { win.focus(); } catch (e) {} }
   return win;
 }
+
+// ---- Diki.pl w bocznym oknie ---------------------------------------------
+// Zwyczajne otwarcie strony slownika — tak jak zrobilbys to sam w nowej
+// karcie. Aplikacja niczego stamtad nie pobiera ani nie kopiuje; tlumaczenie
+// przepisujesz recznie. Okno nazywa sie 'lr-diki', wiec kolejne slowka
+// podmieniaja jego zawartosc zamiast mnozyc popupy.
+function otworzDiki(slowo) {
+  const q = String(slowo || '').trim();
+  if (!q) return null;
+  const url = 'https://www.diki.pl/slownik-angielskiego?q=' + encodeURIComponent(q);
+  const w = Math.max(480, Math.min(820, Math.round((screen.availWidth || 1280) * 0.42)));
+  const h = Math.round((screen.availHeight || 800) * 0.92);
+  const left = Math.max(0, (screen.availWidth || 1280) - w - 20);
+  let win = null;
+  try {
+    win = window.open(url, 'lr-diki', `popup=yes,width=${w},height=${h},left=${left},top=0`);
+  } catch (e) { console.warn('otworzDiki:', e.message); }
+  if (win) { try { win.focus(); } catch (e) {} }
+  return win;
+}
+window.otworzDiki = otworzDiki;
 
 function getGimgAuto() { return localStorage.getItem('lr-gimg-auto') === '1'; }
 function setGimgAuto(v) { localStorage.setItem('lr-gimg-auto', v ? '1' : '0'); }
