@@ -2191,7 +2191,7 @@ body.focus-mode .reader-content { max-width: 1000px; }
 // ============================================================
 // WERSJA APLIKACJI I AKTUALIZACJE (PWA)
 // ============================================================
-const APP_VERSION = '1.10.3';
+const APP_VERSION = '1.11.0';
 const APP_BUILD = '2026-08-03';
 
 // Telefon: trzymamy pionowa orientacje. W manifescie jest "portrait", ale
@@ -8535,6 +8535,30 @@ async function updateBadges() {
   // Przy Fiszkach zostaje, bo pokazuje ile powtorek czeka DZIS.
   const licznikFiszek = document.getElementById('review-count');
   if (licznikFiszek) licznikFiszek.textContent = reviewable.length;
+  wyslijSlownikDoWtyczki(words, reviewable);
+}
+
+// ------------------------------------------------------------
+// Podaj wtyczce Chrome liste swoich slowek.
+// Dzieki temu w napisach i na stronach widac od razu, ktore
+// slowa juz sie uczysz i ktore czekaja dzis na powtorke.
+// Wychodzi tylko lista slow i ich status — zadnej tresci.
+// ------------------------------------------------------------
+let _wysylkaSlownika = null;
+function wyslijSlownikDoWtyczki(words, doPowtorki) {
+  clearTimeout(_wysylkaSlownika);
+  _wysylkaSlownika = setTimeout(async () => {
+    try {
+      const lista = words || await db.getAll('words');
+      const dzis = new Set((doPowtorki || await db.getWordsForReview()).map(w => w.word));
+      const mapa = {};
+      for (const w of lista) {
+        if (!w || !w.word) continue;
+        mapa[w.word] = { s: w.status || 1, d: dzis.has(w.word) ? 1 : 0 };
+      }
+      window.postMessage({ typ: 'LINGREADER_SLOWNIK', slowa: mapa, ile: lista.length }, '*');
+    } catch (e) { /* wtyczki moze nie byc — nic sie nie dzieje */ }
+  }, 1200);
 }
 
 // ============================================================
